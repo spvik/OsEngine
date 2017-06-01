@@ -9,16 +9,12 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 using System.Windows;
-using Microsoft.Office.Interop.Excel;
 using OsEngine.Entity;
 using OsEngine.Logging;
 using OsEngine.Market.Servers.Entity;
-using OsEngine.Market.Servers.SmartCom;
 using Action = System.Action;
 
 namespace OsEngine.Market.Servers.Finam
@@ -35,7 +31,12 @@ namespace OsEngine.Market.Servers.Finam
         /// </summary>
         public FinamServer()
         {
-            ServerAdress = "78.41.196.47";
+            if (!Directory.Exists(@"Data\Temp\"))
+            {
+                Directory.CreateDirectory(@"Data\Temp\");
+            }
+
+            ServerAdress = "export.finam.ru";
             ServerStatus = ServerConnectStatus.Disconnect;
             ServerType = ServerType.Finam;
 
@@ -51,10 +52,13 @@ namespace OsEngine.Market.Servers.Finam
             _threadPrime.IsBackground = true;
             _threadPrime.Start();
 
-            Thread threadDataSender = new Thread(SenderThreadArea);
-            threadDataSender.CurrentCulture = new CultureInfo("ru-RU");
-            threadDataSender.IsBackground = true;
-            threadDataSender.Start();
+            if (ServerMaster.IsOsData == false)
+            {
+                Thread threadDataSender = new Thread(SenderThreadArea);
+                threadDataSender.CurrentCulture = new CultureInfo("ru-RU");
+                threadDataSender.IsBackground = true;
+                threadDataSender.Start();
+            }
 
             _tradesToSend = new ConcurrentQueue<List<Trade>>();
             _securitiesToSend = new ConcurrentQueue<List<Security>>();
@@ -875,8 +879,13 @@ namespace OsEngine.Market.Servers.Finam
                         CandlesAll = _candles,
                         IsStarted = true
                     };
-                    series.СandleFinishedEvent += series_СandleFinishedEvent;
-                    series.СandleUpdeteEvent += series_СandleFinishedEvent;
+
+                    if (ServerMaster.IsOsData == false)
+                    {
+                        series.СandleFinishedEvent += series_СandleFinishedEvent;
+                        series.СandleUpdeteEvent += series_СandleFinishedEvent;
+                    }
+
 
                     FinamDataSeries finamDataSeries = new FinamDataSeries();
 
@@ -954,7 +963,7 @@ namespace OsEngine.Market.Servers.Finam
             List<Trade> tradeList = new List<Trade>();
             tradeList.Add(newtTrade);
 
-            finamDataSeries_TradesUpdateEvent(tradeList);
+            TradesUpdateEvent(tradeList);
 
             ServerTime = newtTrade.Time;
 
@@ -1027,8 +1036,9 @@ namespace OsEngine.Market.Servers.Finam
                     finamDataSeries.TimeEnd = endTime;
                     finamDataSeries.TimeStart = startTime;
                     finamDataSeries.IsTick = true;
-                    finamDataSeries.TradesUpdateEvent += finamDataSeries_TradesUpdateEvent;
+                    finamDataSeries.TradesUpdateEvent += finamDataSecies_TradesFilesUpdateEvent;
                     finamDataSeries.NeadToUpdeate = neadToUpdete;
+                    finamDataSeries.LogMessageEvent += SendLogMessage;
 
                     if (_finamDataSeries == null)
                     {
@@ -1128,7 +1138,38 @@ namespace OsEngine.Market.Servers.Finam
 
         // тики
 
-        void finamDataSeries_TradesUpdateEvent(List<Trade> tradesNew)
+        /// <summary>
+        /// имена файлов загруженных из финам с трейдами
+        /// </summary>
+        private List<List<string>> _downLoadFilesWhithTrades;  
+
+        private void finamDataSecies_TradesFilesUpdateEvent(List<string> files)
+        {
+            if (_downLoadFilesWhithTrades == null)
+            {
+                _downLoadFilesWhithTrades = new List<List<string>>();
+            }
+
+            for(int i =  0;i < files.Count;i++)
+            {
+                if (files[i] == null)
+                {
+                    continue;
+                }
+                string name = files[i].Split('_')[0];
+
+                List<string> myList = _downLoadFilesWhithTrades.Find(f => f[0].Split('_')[0] == name);
+
+                if (myList == null)
+                {
+                    myList = new List<string>();
+                    _downLoadFilesWhithTrades.Add(myList);
+                }
+                myList.Add(files[i]);
+            }
+        }
+
+        private void TradesUpdateEvent(List<Trade> tradesNew)
         {
             if (_allTrades == null)
             {
@@ -1172,15 +1213,15 @@ namespace OsEngine.Market.Servers.Finam
                 }
             }
 
-                foreach (var trades in _allTrades)
+            foreach (var trades in _allTrades)
+            {
+                if (tradesNew[0].SecurityNameCode == trades[0].SecurityNameCode)
                 {
-                    if (tradesNew[0].SecurityNameCode == trades[0].SecurityNameCode)
-                    {
-                        _tradesToSend.Enqueue(trades);
-                        break;
-                    }
+                    _tradesToSend.Enqueue(trades);
+                    break;
                 }
-            
+            }
+
         }
 
         /// <summary>
@@ -1195,8 +1236,6 @@ namespace OsEngine.Market.Servers.Finam
         {
             get { return _allTrades; }
         }
-
-        
 
         /// <summary>
         /// взять тики по инструменту
@@ -1217,6 +1256,16 @@ namespace OsEngine.Market.Servers.Finam
             }
 
             return new List<Trade>();
+        }
+
+        public List<string> GetAllFilesWhithTradeToSecurity(string security)
+        {
+            if (_downLoadFilesWhithTrades == null)
+            {
+                _downLoadFilesWhithTrades = new List<List<string>>();
+            }
+
+            return _downLoadFilesWhithTrades.Find(s => s[0].Split('_')[0] == @"Data\Temp\" + security);
         }
 
         /// <summary>
@@ -1322,6 +1371,7 @@ namespace OsEngine.Market.Servers.Finam
     /// </summary>
     public class FinamDataSeries
     {
+
         /// <summary>
         /// префикс для адреса сервера
         /// </summary>
@@ -1424,7 +1474,7 @@ namespace OsEngine.Market.Servers.Finam
         /// <summary>
         /// обновились трейды
         /// </summary>
-        public event Action<List<Trade>> TradesUpdateEvent;
+        public event Action<List<string>> TradesUpdateEvent;
 
         /// <summary>
         /// является ли текущий объект скачивающим тики
@@ -1444,13 +1494,19 @@ namespace OsEngine.Market.Servers.Finam
                     return;
                 }
 
-                if (Series == null)
+                if (IsTick == false)
                 {
-                    return;               
+                    if (Series == null)
+                    {
+                        return;
+                    }
+
+                    Series.IsStarted = true;
                 }
 
-                Series.IsStarted = true;
                 LoadedOnce = true;
+
+                SendLogMessage(SecurityFinam.Name + " Старт скачивания данных. ТФ " + _timeFrame, LogMessageType.System);
 
                 if (IsTick == false)
                 {
@@ -1462,15 +1518,42 @@ namespace OsEngine.Market.Servers.Finam
                         TimeFrame == TimeFrame.Sec30 ||
                         TimeFrame == TimeFrame.Sec5)
                     {
-                        List<Trade> trades = GetTrades();
+                        List<string> trades = GetTrades();
 
-                       /* GC.Collect();
-                        GC.WaitForPendingFinalizers();*/
+                        List<Trade> listTrades = new List<Trade>();
+                        Trade newTrade = new Trade();
 
-                        if (trades != null && trades.Count != 0)
+                        for (int i = 0; trades!= null && i < trades.Count; i++)
                         {
-                            Series.SetNewTicks(trades);
+                            if (trades[i] == null)
+                            {
+                                continue;
+                            }
+                            StreamReader reader = new StreamReader(trades[i]);
+
+                            while (!reader.EndOfStream)
+                            {
+                                try
+                                {
+                                    newTrade.SetTradeFromString(reader.ReadLine());
+
+                                    if (newTrade.Time.Hour < 10)
+                                    {
+                                        continue;
+                                    }
+                                    listTrades.Add(newTrade);
+                                    Series.SetNewTicks(listTrades);
+                                    TimeActual = newTrade.Time;
+                                }
+                                catch
+                                {
+                                     // ignore
+                                }
+
+                            }
+                            reader.Close();
                         }
+                        listTrades.Clear();
                     }
                     else
                     {
@@ -1489,7 +1572,7 @@ namespace OsEngine.Market.Servers.Finam
                 }
                 else //if (IsTick == true)
                 {
-                    List<Trade> trades = GetTrades();
+                    List<string> trades = GetTrades();
 
                     if (TradesUpdateEvent != null)
                     {
@@ -1501,6 +1584,7 @@ namespace OsEngine.Market.Servers.Finam
             {
                 SendLogMessage(error.ToString(), LogMessageType.Error);
             }
+            SendLogMessage(SecurityFinam.Name + " Закончили скачивание данных. ТФ " + _timeFrame, LogMessageType.System);
         }
 
         /// <summary>
@@ -1517,7 +1601,7 @@ namespace OsEngine.Market.Servers.Finam
         /// обновить трейды
         /// </summary>
         /// <returns></returns>
-        private List<Trade> GetTrades()
+        private List<string> GetTrades()
         {
             DateTime timeStart = TimeStart;
 
@@ -1533,32 +1617,26 @@ namespace OsEngine.Market.Servers.Finam
                 timeStart = TimeActual;
             }
 
-            List<Trade> trades = new List<Trade>();
+            List<string> trades = new List<string>();
 
             while (timeStart.Date != timeEnd.Date)
             {
-                List<Trade> tradesOneDay = GetTrades(timeStart.Date, timeStart.Date);
+                string tradesOneDay = GetTrades(timeStart.Date, timeStart.Date);
                 timeStart = timeStart.AddDays(1);
 
                 if (tradesOneDay != null)
                 {
-                    trades.AddRange(tradesOneDay);
+                    trades.Add(tradesOneDay);
                 }
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
             }
 
-            List<Trade> tradesToday = GetTrades(timeStart.Date, timeStart.Date);
+            string tradesToday = GetTrades(timeStart.Date, timeStart.Date);
 
             if (tradesToday != null)
             {
-                trades.AddRange(tradesToday);
-            }
-
-
-            if (trades.Count != 0)
-            {
-                TimeActual = trades[trades.Count - 1].Time;
+                trades.Add(tradesToday);
             }
 
             return trades;
@@ -1570,7 +1648,7 @@ namespace OsEngine.Market.Servers.Finam
         /// <param name="timeStart"></param>
         /// <param name="timeEnd"></param>
         /// <returns></returns>
-        private List<Trade> GetTrades(DateTime timeStart, DateTime timeEnd)
+        private string GetTrades(DateTime timeStart, DateTime timeEnd)
         {
             SendLogMessage("Обновляем данные по трейдам для бумаги " + SecurityFinam.Name + " за " + timeStart.Date, LogMessageType.System);
             //http://195.128.78.52/GBPUSD_141201_141206.csv?market=5&em=86&code=GBPUSD&df=1&mf=11&yf=2014&from=01.12.2014&dt=6&mt=11&yt=2014&to=06.12.2014&
@@ -1582,9 +1660,9 @@ namespace OsEngine.Market.Servers.Finam
             string timeFrom = timeStart.ToShortDateString();
             string timeTo = timeEnd.ToShortDateString();
 
-            string fileName = SecurityFinam.Name + "_" + timeStartInStrToName + "_" + timeEndInStrToName;
+            string urlToSec = SecurityFinam.Name + "_" + timeStartInStrToName + "_" + timeEndInStrToName;
 
-            string url = ServerPrefics + "/" +fileName+ ".txt?";
+            string url = ServerPrefics + "/" +urlToSec+ ".txt?";
 
             url += "market=" + SecurityFinam.MarketId + "&";
             url += "em=" + SecurityFinam.Id + "&";
@@ -1600,7 +1678,7 @@ namespace OsEngine.Market.Servers.Finam
             url += "to=" + timeTo + "&";
 
             url += "p=" + 1 + "&";
-            url += "f=" + fileName+ "&";
+            url += "f=" + urlToSec+ "&";
             url += "e=" + ".txt" + "&";
             url += "cn=" + SecurityFinam.Name + "&";
             url += "dtf=" + 1 + "&";
@@ -1613,17 +1691,30 @@ namespace OsEngine.Market.Servers.Finam
             url += "datf=" + "9" + "&";
             url += "at=" + "0" ;
 
+// если мы уже эту серию трейдов качали, пробуем достать её из общего хранилища
+
+            string fileName = @"Data\Temp\" + SecurityFinam.Name + "_" + timeStart.ToShortDateString() + ".txt";
+
+            if (timeStart.Date != DateTime.Now.Date &&
+                File.Exists(fileName))
+            {
+                return fileName;
+            }
+
+
+// запрашиваем данные
+
             WebClient wb = new WebClient();
 
             try
             {
                 _tickLoaded = false;
-                wb.DownloadStringAsync(new Uri(url, UriKind.Absolute));
-                wb.DownloadStringCompleted += wb_DownloadStringCompleted;
+                wb.DownloadFileAsync(new Uri(url, UriKind.Absolute), fileName);
+                wb.DownloadFileCompleted += wb_DownloadFileCompleted;
             }
             catch (Exception)
             {
-
+                wb.Dispose();
                 return null;
             }
 
@@ -1637,59 +1728,22 @@ namespace OsEngine.Market.Servers.Finam
             }
             wb.Dispose();
 
-            if (!string.IsNullOrWhiteSpace(_loadString))
-            {
-                List<Trade> trades = new List<Trade>();
-
-                _loadString = _loadString.Replace("\r\n", "&");
-
-                string[] tradesInStr = _loadString.Split('&');
-
-                _loadString = null;
-
-                if (tradesInStr.Length < 5)
-                {
-                    return null;
-                }
-
-                string name = SecurityFinam.Code.Replace("\'", "");
-
-                for (int i = 0; i < tradesInStr.Length; i++)
-                {
-                    if (tradesInStr[i] == "")
-                    {
-                        continue;
-                    }
-
-                    Trade newTrade = new Trade();
-                    newTrade.SetTradeFromString(tradesInStr[i]);
-                    newTrade.SecurityNameCode = name;
-
-                    if (newTrade.Time.Hour > 10)
-                    {
-                        trades.Add(newTrade);
-                    }
-                }
-                return trades;
-            }
-            else
-            {
-
+            if (!File.Exists(fileName))
+            { // файл не загружен
+                return null;
             }
 
-            return null;
+            return fileName;
+
+ 
         }
 
-        private bool _tickLoaded;
-
-        private string _loadString;
-
-        void wb_DownloadStringCompleted(object sender, DownloadStringCompletedEventArgs e)
+        void wb_DownloadFileCompleted(object sender, System.ComponentModel.AsyncCompletedEventArgs e)
         {
-            _loadString = e.Result;
             _tickLoaded = true;
         }
 
+        private bool _tickLoaded;
 
         /// <summary>
         /// обновить свечи
