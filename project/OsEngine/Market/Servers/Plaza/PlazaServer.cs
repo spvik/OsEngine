@@ -34,13 +34,14 @@ namespace OsEngine.Market.Servers.Plaza
             KeyToProggram = "11111111";
             Load();
 
+            _tickStorage = new ServerTickStorage(this);
+            _tickStorage.NeadToSave = NeadToSaveTicks;
+            _tickStorage.DaysToLoad = CountDaysTickNeadToSave;
+            _tickStorage.TickLoadedEvent += _tickStorage_TickLoadedEvent;
+            _tickStorage.LogMessageEvent += SendNewLogMessage;
+
             if (neadToLoadTicks)
             {
-                _tickStorage = new ServerTickStorage(this);
-                _tickStorage.NeadToSave = NeadToSaveTicks;
-                _tickStorage.DaysToLoad = CountDaysTickNeadToSave;
-                _tickStorage.TickLoadedEvent += _tickStorage_TickLoadedEvent;
-                _tickStorage.LogMessageEvent += SendNewLogMessage;
                 _tickStorage.LoadTick();
             }
         }
@@ -597,6 +598,41 @@ namespace OsEngine.Market.Servers.Plaza
 // стакан
 
         /// <summary>
+        /// стаканы по инструментам
+        /// </summary>
+        private List<MarketDepth> _marketDepths = new List<MarketDepth>();
+
+        /// <summary>
+        /// взять стакан по названию бумаги
+        /// </summary>
+        public MarketDepth GetMarketDepth(string securityName)
+        {
+            return _marketDepths.Find(m => m.SecurityNameCode == securityName);
+        }
+
+// сохранение расширенных данных по трейду
+
+        /// <summary>
+        /// прогрузить трейды данными стакана
+        /// </summary>
+        private void BathTradeMarketDepthData(Trade trade)
+        {
+            MarketDepth depth = _marketDepths.Find(d => d.SecurityNameCode == trade.SecurityNameCode);
+
+            if (depth == null ||
+                depth.Asks == null || depth.Asks.Count == 0 ||
+                depth.Bids == null || depth.Bids.Count == 0)
+            {
+                return;
+            }
+
+            trade.Ask = depth.Asks[0].Price;
+            trade.Bid = depth.Bids[0].Price;
+            trade.BidsVolume = depth.BidSummVolume;
+            trade.AsksVolume = depth.AskSummVolume;
+        }
+
+        /// <summary>
         /// изменился какой-то стакан
         /// </summary>
         /// <param name="depth"></param>
@@ -611,13 +647,25 @@ namespace OsEngine.Market.Servers.Plaza
 
             if (NewBidAscIncomeEvent != null)
             {
-                if (depth.Bids == null || depth.Bids.Count == 0 ||
-                    depth.Asks == null || depth.Asks.Count == 0)
+                if (depth.Asks == null || depth.Asks.Count == 0 ||
+                    depth.Bids == null || depth.Bids.Count == 0)
                 {
                     return;
                 }
-                NewBidAscIncomeEvent(depth.Bids[0].Price, depth.Asks[0].Price, GetSecurityForName(depth.SecurityNameCode));
+                NewBidAscIncomeEvent(depth.Asks[0].Price, depth.Bids[0].Price, GetSecurityForName(depth.SecurityNameCode));
             }
+
+            // грузим стаканы в хранилище
+            for (int i = 0; i < _marketDepths.Count; i++)
+            {
+                if (_marketDepths[i].SecurityNameCode == depth.SecurityNameCode)
+                {
+                    _marketDepths[i] = depth;
+                    return;
+                }
+            }
+
+            _marketDepths.Add(depth);
         }
 
         /// <summary>
@@ -647,7 +695,6 @@ namespace OsEngine.Market.Servers.Plaza
         {
             _allTrades = trades;
         }
-
 
         /// <summary>
         /// взять все сделки по бумаге
@@ -691,6 +738,8 @@ namespace OsEngine.Market.Servers.Plaza
             }
 
             trade.SecurityNameCode = security.Name;
+
+            BathTradeMarketDepthData(trade);
 
             if (_allTrades == null)
             {

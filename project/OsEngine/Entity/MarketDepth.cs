@@ -11,8 +11,8 @@ namespace OsEngine.Entity
     {
         public MarketDepth()
         {
-            Bids = new List<MarketDepthLevel>();
             Asks = new List<MarketDepthLevel>();
+            Bids = new List<MarketDepthLevel>();
         }
         /// <summary>
         /// время создания стакана
@@ -20,20 +20,21 @@ namespace OsEngine.Entity
         public DateTime Time;
 
         /// <summary>
-        /// уровни предаж. лучшая с индексом 0
-        /// </summary>
-        public List<MarketDepthLevel> Bids;
-
-        /// <summary>
-        /// уровни покупок. лучшая с индексом 0
+        /// уровни продаж. лучшая с индексом 0
         /// </summary>
         public List<MarketDepthLevel> Asks;
 
         /// <summary>
-        /// суммарный объём в покупках
+        /// уровни покупок. лучшая с индексом 0
+        /// </summary>
+        public List<MarketDepthLevel> Bids;
+
+        /// <summary>
+        /// суммарный объём в продажах
         /// </summary>
         public int AskSummVolume
         {
+
             get
             {
                 int vol = 0;
@@ -46,7 +47,7 @@ namespace OsEngine.Entity
         }
 
         /// <summary>
-        /// суммарный объём в продажах
+        /// суммарный объём в покупках
         /// </summary>
         public int BidSummVolume
         {
@@ -89,30 +90,30 @@ namespace OsEngine.Entity
             
             string[] bids = save[3].Split('*');
 
-            Bids = new List<MarketDepthLevel>();
+            Asks = new List<MarketDepthLevel>();
 
             for (int i = 0; i < bids.Length - 1; i++)
             {
                 string[] val = bids[i].Split('&');
 
                 MarketDepthLevel newBid = new MarketDepthLevel();
-                newBid.Bid = Convert.ToDecimal(val[0]);
+                newBid.Ask = Convert.ToDecimal(val[0]);
                 newBid.Price = Convert.ToDecimal(val[1]);
-                Bids.Add(newBid);
+                Asks.Add(newBid);
             }
 
             string[] asks = save[4].Split('*');
 
-            Asks = new List<MarketDepthLevel>();
+            Bids = new List<MarketDepthLevel>();
 
             for (int i = 0; i < asks.Length - 1; i++)
             {
                 string[] val = asks[i].Split('&');
 
                 MarketDepthLevel newAsk = new MarketDepthLevel();
-                newAsk.Ask = Convert.ToDecimal(val[0]);
+                newAsk.Bid = Convert.ToDecimal(val[0]);
                 newAsk.Price = Convert.ToDecimal(val[1]);
-                Asks.Add(newAsk);
+                Bids.Add(newAsk);
             }
         }
 
@@ -138,44 +139,47 @@ namespace OsEngine.Entity
 
             result += Time.Millisecond + "_"; 
 
-            for (int i = 0; i < Bids.Count && i < depth; i++)
-            {
-                result += Bids[i].Bid + "&" + Bids[i].Price + "*";
-            }
-            result += "_";
-
             for (int i = 0; i < Asks.Count && i < depth; i++)
             {
                 result += Asks[i].Ask + "&" + Asks[i].Price + "*";
+            }
+            result += "_";
+
+            for (int i = 0; i < Bids.Count && i < depth; i++)
+            {
+                result += Bids[i].Bid + "&" + Bids[i].Price + "*";
             }
 
             return result;
         }
 
+        /// <summary>
+        /// взять "глубокую" копию стакана
+        /// </summary>
         public MarketDepth GetCopy()
         {
             MarketDepth newDepth = new MarketDepth();
             newDepth.Time = Time;
             newDepth.SecurityNameCode = SecurityNameCode;
-            newDepth.Bids = new List<MarketDepthLevel>();
-
-            for (int i = 0; Bids != null && i < Bids.Count; i++)
-            {
-                newDepth.Bids.Add(new MarketDepthLevel());
-                newDepth.Bids[i].Bid = Bids[i].Bid;
-                newDepth.Bids[i].Ask = Bids[i].Ask;
-                newDepth.Bids[i].Price = Bids[i].Price;
-            }
-
-
             newDepth.Asks = new List<MarketDepthLevel>();
 
             for (int i = 0; Asks != null && i < Asks.Count; i++)
             {
                 newDepth.Asks.Add(new MarketDepthLevel());
-                newDepth.Asks[i].Bid = Asks[i].Bid;
                 newDepth.Asks[i].Ask = Asks[i].Ask;
+                newDepth.Asks[i].Bid = Asks[i].Bid;
                 newDepth.Asks[i].Price = Asks[i].Price;
+            }
+
+
+            newDepth.Bids = new List<MarketDepthLevel>();
+
+            for (int i = 0; Bids != null && i < Bids.Count; i++)
+            {
+                newDepth.Bids.Add(new MarketDepthLevel());
+                newDepth.Bids[i].Ask = Bids[i].Ask;
+                newDepth.Bids[i].Bid = Bids[i].Bid;
+                newDepth.Bids[i].Price = Bids[i].Price;
             }
 
             return newDepth;
@@ -187,17 +191,25 @@ namespace OsEngine.Entity
     /// </summary>
     public class MarketDepthLevel
     {
+
         /// <summary>
         /// количество контрактов на продажу по этому уровню цены
         /// </summary>
-        public decimal Bid;
+        public decimal Ask;
+
         /// <summary>
         /// количество контрактов на покупку по этому уровню цены
         /// </summary>
-        public decimal Ask;
+        public decimal Bid;
+
         /// <summary>
         /// цена
         /// </summary>
         public decimal Price;
+
+        /// <summary>
+        /// уникальный номер ценового уровня, необходим для работы с BitMex
+        /// </summary>
+        public long Id;
     }
 }

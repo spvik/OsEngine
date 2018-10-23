@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 
 namespace OsEngine.Entity
 {
@@ -136,7 +137,7 @@ namespace OsEngine.Entity
                     return false;
                 }
 
-                if (CloseOrders.Find(order => order.State == OrderStateType.Activ || order.State == OrderStateType.Pending || order.State == OrderStateType.None) != null)
+                if (CloseOrders.Find(order => order.State == OrderStateType.Activ || order.State == OrderStateType.Pending) != null)
                 {
                     return true;
                 }
@@ -198,12 +199,12 @@ namespace OsEngine.Entity
         }
 
         /// <summary>
-        /// номер сделки
+        /// номер позиции
         /// </summary>
         public int Number;
 
         /// <summary>
-        /// Бумага по которой открыта позиция
+        /// Код инструмента по которому открыта позиция
         /// </summary>
         public string SecurityName
         {
@@ -250,11 +251,11 @@ namespace OsEngine.Entity
         /// <summary>
         /// максимальный объём по позиции
         /// </summary>
-        public int MaxVolume
+        public decimal MaxVolume
         {
             get
             {
-                int value = 0;
+                decimal value = 0;
 
                 for (int i = 0; _openOrders != null && i < _openOrders.Count; i++)
                 {
@@ -269,13 +270,13 @@ namespace OsEngine.Entity
         /// <summary>
         /// количество контрактов открытых в сделке
         /// </summary>
-        public int OpenVolume 
+        public decimal OpenVolume 
         {
             get
             {
                 if (CloseOrders == null)
                 {
-                    int volume = 0;
+                    decimal volume = 0;
 
                     for (int i = 0;_openOrders != null && i < _openOrders.Count; i++)
                     {
@@ -284,7 +285,7 @@ namespace OsEngine.Entity
                     return volume;
                 }
 
-                int valueClose = 0;
+                decimal valueClose = 0;
 
                 if (CloseOrders != null)
                 {
@@ -294,14 +295,14 @@ namespace OsEngine.Entity
                     }
                 }
 
-                int volumeOpen = 0;
+                decimal volumeOpen = 0;
 
                 for (int i = 0; _openOrders != null && i < _openOrders.Count; i++)
                 {
                     volumeOpen += _openOrders[i].VolumeExecute;
                 }
 
-                int value = volumeOpen - valueClose;
+                decimal value = volumeOpen - valueClose;
 
                 return value;
 
@@ -311,11 +312,11 @@ namespace OsEngine.Entity
         /// <summary>
         /// количество котрактов ожидающих открытия
         /// </summary>
-        public int WaitVolume
+        public decimal WaitVolume
         {
             get
             {
-                int volumeWait = 0;
+                decimal volumeWait = 0;
 
                 for (int i = 0; _openOrders != null && i < _openOrders.Count; i++)
                 {
@@ -343,16 +344,15 @@ namespace OsEngine.Entity
                 }
 
                 decimal price = 0;
-                int volume = 0;
+                decimal volume = 0;
                 for (int i = 0; i < _openOrders.Count; i++)
                 {
-                    int volumeEx = _openOrders[i].VolumeExecute;
+                    decimal volumeEx = _openOrders[i].VolumeExecute;
                     if (volumeEx != 0)
                     {
                         volume += _openOrders[i].VolumeExecute;
                         price += _openOrders[i].VolumeExecute * _openOrders[i].PriceReal;
                     }
-                    
                 }
                 if (volume == 0)
                 {
@@ -370,11 +370,30 @@ namespace OsEngine.Entity
         {
             get
             {
-                if (CloseOrders != null && CloseOrders.Count != 0)
+                if (_closeOrders == null ||
+                    _closeOrders.Count == 0)
                 {
-                    return CloseOrders[CloseOrders.Count - 1].PriceReal;
+                    return 0;
                 }
-                return 0;
+
+                decimal price = 0;
+                decimal volume = 0;
+                for (int i = 0; i < _closeOrders.Count; i++)
+                {
+                    decimal volumeEx = _closeOrders[i].VolumeExecute;
+                    if (volumeEx != 0)
+                    {
+                        volume += _closeOrders[i].VolumeExecute;
+                        price += _closeOrders[i].VolumeExecute*_closeOrders[i].PriceReal;
+                    }
+
+                }
+                if (volume == 0)
+                {
+                    return 0;
+                }
+
+                return price/volume;
             }
         }
 
@@ -383,17 +402,17 @@ namespace OsEngine.Entity
         /// </summary>
         public void SetOrder(Order newOrder)
         {
-
             Order openOrder = null;
-
             if (_openOrders != null)
             {
                 for (int i = 0; i < _openOrders.Count; i++)
                 {
                     if (_openOrders[i].NumberUser == newOrder.NumberUser)
                     {
-                        if (_openOrders[i].State == OrderStateType.Fail && newOrder.State == OrderStateType.Fail ||
-                            _openOrders[i].State == OrderStateType.Cancel && newOrder.State == OrderStateType.Cancel)
+                        if ((State == PositionStateType.Done || State == PositionStateType.OpeningFail) 
+                            &&
+                            ((_openOrders[i].State == OrderStateType.Fail && newOrder.State == OrderStateType.Fail) ||
+                            (_openOrders[i].State == OrderStateType.Cancel && newOrder.State == OrderStateType.Cancel)))
                         {
                             return;
                         }
@@ -498,7 +517,7 @@ namespace OsEngine.Entity
                 {
                     //AlertMessageManager.ThrowAlert(null, "Done пересчёт", "");
                     decimal medianPriceClose = 0;
-                    int countValue = 0;
+                    decimal countValue = 0;
 
                     for (int i = 0; i < CloseOrders.Count; i++)
                     {
@@ -544,7 +563,8 @@ namespace OsEngine.Entity
 
                 for (int i = 0; i < _openOrders.Count; i++)
                 {
-                    if (_openOrders[i].NumberMarket == trade.NumberOrderParent)
+                    if (_openOrders[i].NumberMarket == trade.NumberOrderParent||
+                        _openOrders[i].NumberUser.ToString() == trade.NumberOrderParent)
                     {
                         _openOrders[i].SetTrade(trade);
                         if (OpenVolume != 0)
@@ -563,7 +583,8 @@ namespace OsEngine.Entity
             {
                 for (int i = 0; i < CloseOrders.Count; i++)
                 {
-                    if (CloseOrders[i].NumberMarket == trade.NumberOrderParent)
+                    if (CloseOrders[i].NumberMarket == trade.NumberOrderParent ||
+                        CloseOrders[i].NumberUser.ToString() == trade.NumberOrderParent)
                     {
                         CloseOrders[i].SetTrade(trade);
                         if (OpenVolume == 0)
@@ -582,7 +603,7 @@ namespace OsEngine.Entity
             if (State == PositionStateType.Done && CloseOrders != null && EntryPrice != 0 )
             {
                 decimal medianPriceClose = 0;
-                int countValue = 0;
+                decimal countValue = 0;
 
                 for (int i = 0; i < CloseOrders.Count; i++)
                 {
@@ -645,58 +666,58 @@ namespace OsEngine.Entity
         /// <summary>
         /// взять строку для сохранения
         /// </summary>
-        public string GetStringForSave()
+        public StringBuilder GetStringForSave()
         {
-            string result = "";
+            StringBuilder result = new StringBuilder();
 
-            result += Direction + "#";
+            result.Append(Direction + "#");
 
-            result += State + "#";
+            result.Append(State + "#");
 
-            result += NameBot + "#";
+            result.Append( NameBot + "#");
 
-            result += ProfitOperationPersent.ToString(new CultureInfo("ru-RU")) + "#";
+            result.Append(ProfitOperationPersent.ToString(new CultureInfo("ru-RU")) + "#");
 
-            result += ProfitOperationPunkt.ToString(new CultureInfo("ru-RU")) + "#";
+            result.Append(ProfitOperationPunkt.ToString(new CultureInfo("ru-RU")) + "#");
 
             if (OpenOrders == null)
             {
-                result += "null" + "#";
+                result.Append("null" + "#");
             }
             else
             {
                 for(int i = 0;i < OpenOrders.Count;i++)
                 {
-                    result += OpenOrders[i].GetStringForSave() + "^";
+                    result.Append(OpenOrders[i].GetStringForSave() + "^");
                 }
-                result += "#";
+                result.Append("#");
             }
 
-            result += Number + "#";
+            result.Append(Number + "#");
 
-            result += Comment + "#";
+            result.Append(Comment + "#");
 
-            result += StopOrderIsActiv + "#";
-            result += StopOrderPrice + "#";
-            result += StopOrderRedLine + "#";
+            result.Append(StopOrderIsActiv + "#");
+            result.Append(StopOrderPrice + "#");
+            result.Append(StopOrderRedLine + "#");
 
-            result += ProfitOrderIsActiv + "#";
-            result += ProfitOrderPrice + "#";
+            result.Append(ProfitOrderIsActiv + "#");
+            result.Append(ProfitOrderPrice + "#");
 
-            result += Lots + "#";
-            result += PriceStepCost + "#";
-            result += PriceStep + "#";
-            result += PortfolioValueOnOpenPosition + "#";
+            result.Append(Lots + "#");
+            result.Append(PriceStepCost + "#");
+            result.Append(PriceStep + "#");
+            result.Append(PortfolioValueOnOpenPosition + "#");
 
-            result += ProfitOrderRedLine + "#";
-            result += SignalTypeOpen + "#";
-            result += SignalTypeClose;
+            result.Append(ProfitOrderRedLine + "#");
+            result.Append(SignalTypeOpen + "#");
+            result.Append(SignalTypeClose);
 
             if (CloseOrders != null)
             {
                 for (int i = 0; i < CloseOrders.Count; i++)
                 {
-                    result += "#" + CloseOrders[i].GetStringForSave();
+                    result.Append("#" + CloseOrders[i].GetStringForSave());
                 }
             }
 
@@ -714,13 +735,13 @@ namespace OsEngine.Entity
 
             NameBot = arraySave[2];
 
-            ProfitOperationPersent = Convert.ToDecimal(arraySave[3]);
+            ProfitOperationPersent = Convert.ToDecimal(arraySave[3].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
-            ProfitOperationPunkt = Convert.ToDecimal(arraySave[4]);
+            ProfitOperationPunkt = Convert.ToDecimal(arraySave[4].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
             if (arraySave[5] != "null")
             {
-               string[] ordersOpen = arraySave[5].Split('^');
+                string[] ordersOpen = arraySave[5].Split('^');
                 if (ordersOpen.Length != 1)
                 {
                     _openOrders = new List<Order>();
@@ -736,18 +757,18 @@ namespace OsEngine.Entity
             Comment = arraySave[7];
 
             StopOrderIsActiv = Convert.ToBoolean(arraySave[8]);
-            StopOrderPrice = Convert.ToDecimal(arraySave[9]);
-            StopOrderRedLine = Convert.ToDecimal(arraySave[10]);
+            StopOrderPrice = Convert.ToDecimal(arraySave[9].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            StopOrderRedLine = Convert.ToDecimal(arraySave[10].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
             ProfitOrderIsActiv = Convert.ToBoolean(arraySave[11]);
-            ProfitOrderPrice = Convert.ToDecimal(arraySave[12]);
+            ProfitOrderPrice = Convert.ToDecimal(arraySave[12].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
-            Lots = Convert.ToDecimal(arraySave[13]);
-            PriceStepCost = Convert.ToDecimal(arraySave[14]);
-            PriceStep = Convert.ToDecimal(arraySave[15]);
-            PortfolioValueOnOpenPosition = Convert.ToDecimal(arraySave[16]);
+            Lots = Convert.ToDecimal(arraySave[13].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            PriceStepCost = Convert.ToDecimal(arraySave[14].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            PriceStep = Convert.ToDecimal(arraySave[15].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            PortfolioValueOnOpenPosition = Convert.ToDecimal(arraySave[16].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
-            ProfitOrderRedLine = Convert.ToDecimal(arraySave[17]);
+            ProfitOrderRedLine = Convert.ToDecimal(arraySave[17].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
             SignalTypeOpen = arraySave[18];
             SignalTypeClose = arraySave[19];
@@ -776,7 +797,7 @@ namespace OsEngine.Entity
             {
                 if (_openOrders != null)
                 {
-                    return _openOrders[_openOrders.Count-1].TimeCallBack;
+                    return _openOrders[_openOrders.Count - 1].GetLastTradeTime();
                 }
                 return DateTime.MinValue;
             }
@@ -791,8 +812,48 @@ namespace OsEngine.Entity
             {
                 if (CloseOrders != null && CloseOrders.Count != 0)
                 {
-                    return CloseOrders[CloseOrders.Count - 1].TimeCallBack;
+                    for (int i = CloseOrders.Count-1; i > -1 && i < CloseOrders.Count; i--)
+                    {
+                        DateTime time = CloseOrders[i].GetLastTradeTime();
+                        if (time != DateTime.MinValue)
+                        {
+                            return time;
+                        }
+                    }
                 }
+                return TimeCreate;
+            }
+        }
+
+        /// <summary>
+        /// время открытия позиции. Время когда на бирже прошла первая сделка по нашей позиции
+        /// если сделка ещё не открыта, вернёт время создания позиции
+        /// </summary>
+        public DateTime TimeOpen
+        {
+            get
+            {
+                if (OpenOrders == null || OpenOrders.Count == 0)
+                {
+                    return TimeCreate;
+                }
+
+                DateTime timeOpen = DateTime.MaxValue;
+
+                for (int i = 0; i < OpenOrders.Count; i++)
+                {
+                    if (OpenOrders[i].TradesIsComing &&
+                        OpenOrders[i].TimeExecuteFirstTrade < timeOpen)
+                    {
+                        timeOpen = OpenOrders[i].TimeExecuteFirstTrade;
+                    }
+                }
+
+                if (timeOpen == DateTime.MaxValue)
+                {
+                    return TimeCreate;
+                }
+
                 return TimeCreate;
             }
         }
@@ -822,7 +883,7 @@ namespace OsEngine.Entity
         {
             get
             {
-                int volume = 0;
+                decimal volume = 0;
 
                 for (int i = 0; i < _openOrders.Count; i++)
                 {

@@ -3,9 +3,12 @@
 */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
@@ -23,10 +26,61 @@ namespace OsEngine.Journal.Internal
     /// </summary>
     public class PositionController
     {
+        // статическая часть с работой потока сохраняющего позиции
+
+        /// <summary>
+        /// поток 
+        /// </summary>
+        public static Thread Watcher;
+
+        /// <summary>
+        /// контроллеры позиций которые нужно обслуживать
+        /// </summary>
+        public static List<PositionController> ControllersToCheck = new List<PositionController>();
+
+        /// <summary>
+        /// активировать поток для сохранения
+        /// </summary>
+        public static void Activate()
+        {
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsOsData ||
+                ServerMaster.StartProgram == ServerStartProgramm.IsOsOptimizer)
+            {
+                return;
+            }
+            Watcher = new Thread(WatcherHome);
+            Watcher.Name = "PositionControllerThread";
+            Watcher.IsBackground = true;
+            Watcher.Start();
+        }
+
+        /// <summary>
+        /// место работы потока
+        /// </summary>
+        public static void WatcherHome()
+        {
+
+            while (true)
+            {
+                Thread.Sleep(1000);
+
+                for (int i = 0; i < ControllersToCheck.Count; i++)
+                {
+                    ControllersToCheck[i].SavePositions();
+                    ControllersToCheck[i].TryPaintPositions();
+                }
+
+                if (!MainWindow.ProccesIsWorked)
+                {
+                    return;
+                }
+            }
+        }
+
         // сервис
         public PositionController(string name)
         {
-            if (ServerMaster.IsTester)
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsTester)
             {
                 _typeWork = ConnectorWorkType.Tester;
             }
@@ -37,13 +91,25 @@ namespace OsEngine.Journal.Internal
 
             _name = name;
 
-            Thread worker = new Thread(SaverThreadArea);
-            worker.IsBackground = true;
-            worker.Start();
+            if (Watcher == null)
+            {
+                Activate();
+            }
+
+            ControllersToCheck.Add(this);
 
             CreateTable();
 
             Load();
+
+            if (_deals != null &&
+                _deals.Count > 0)
+            {
+                _openPositions = _deals.FindAll(
+                    position => position.State != PositionStateType.Done
+                                && position.State != PositionStateType.OpeningFail);
+            }
+
         }
 
         /// <summary>
@@ -58,10 +124,13 @@ namespace OsEngine.Journal.Internal
         /// </summary>
         private void Load()
         {
-            if (_typeWork == ConnectorWorkType.Tester)
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsTester ||
+               ServerMaster.StartProgram == ServerStartProgramm.IsOsOptimizer ||
+                ServerMaster.StartProgram == ServerStartProgramm.IsOsMiner)
             {
                 return;
             }
+
             if (!File.Exists(@"Engine\" + _name + @"DealController.txt"))
             {
                 return;
@@ -99,10 +168,12 @@ namespace OsEngine.Journal.Internal
                         {
                             positions.Add(new Position());
                             positions[i].SetDealFromString(reader.ReadLine());
+                            UpdeteOpenPositionArray(positions[i]);
                         }
                         catch (Exception)
                         {
                             positions.Remove(positions[i]);
+                            i--;
                         }
 
                         i++;
@@ -116,7 +187,7 @@ namespace OsEngine.Journal.Internal
                 {
                     for (int i2 = 0; i2 < _deals.Count; i2++)
                     {
-                        PaintPosition(_deals[i2]);
+                        ProcesPosition(_deals[i2]);
                     }
                 }
             }
@@ -133,26 +204,21 @@ namespace OsEngine.Journal.Internal
         {
             try
             {
-                List<Position> deals = _deals;
-
-                _deals = null;
-
-                for (int i = 0; deals != null && i < deals.Count; i++)
-                {
-                    PaintPosition(deals[i]);
-                }
-
+                _neadToSave = false;
                 if (File.Exists(@"Engine\" + _name + @"DealController.txt"))
                 {
                     File.Delete(@"Engine\" + _name + @"DealController.txt");
                 }
 
-                _openPositionChanged = true;
-                _openLongChanged = true;
-                _openShortChanged = true;
-                _closePositionChanged = true;
-                _closeShortChanged = true;
-                _closeLongChanged = true;
+                for (int i = 0; i < ControllersToCheck.Count; i++)
+                {
+                    if (ControllersToCheck[i]._name == _name)
+                    {
+                        ControllersToCheck.RemoveAt(i);
+                        return;
+                    }
+                }
+
             }
             catch (Exception error)
             {
@@ -160,18 +226,36 @@ namespace OsEngine.Journal.Internal
             }
         }
 
-        public void Save()
+        /// <summary>
+        /// очистить от сделок
+        /// </summary>
+        public void Clear()
         {
-            if (_name == "testBot" ||
-                _name == "testBotTick" ||
-                _name == "testBotCandle" ||
-                _typeWork == ConnectorWorkType.Tester)
+            try
             {
-                return;
-            }
+                List<Position> deals = _deals;
 
-            _neadToSave = true;
-            _controlSaveTime = DateTime.Now.AddMinutes(1);
+                _deals = null;
+
+                for (int i = 0; deals != null && i < deals.Count; i++)
+                {
+                    ProcesPosition(deals[i]);
+                }
+
+                _openPositions = new List<Position>();
+                _openLongChanged = true;
+                _openShortChanged = true;
+                _closePositionChanged = true;
+                _closeShortChanged = true;
+                _closeLongChanged = true;
+                _positionsToPaint = new List<Position>();
+                ClearPositionsGrid();
+                _neadToSave = true;
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
         }
 
         /// <summary>
@@ -179,73 +263,50 @@ namespace OsEngine.Journal.Internal
         /// </summary>
         private bool _neadToSave;
 
-        /// <summary>
-        /// время последнего сохранения
-        /// </summary>
-        private DateTime _lastSaveTime = DateTime.MinValue;
-
-        /// <summary>
-        /// время последнего сохранения
-        /// </summary>
-        private DateTime _controlSaveTime = DateTime.MinValue;
-
-        private void SaverThreadArea()
+        private void SavePositions()
         {
-            while (true)
+            if (!_neadToSave)
             {
-                Thread.Sleep(1000);
+                return;
+            }
 
-                if (!_neadToSave && _controlSaveTime == DateTime.MinValue)
-                {
-                    continue;
-                }
-                if (!_neadToSave && _controlSaveTime > DateTime.Now)
-                {
-                    continue;
-                }
-                if (!_neadToSave && _controlSaveTime <= DateTime.Now)
-                {
-                    _controlSaveTime = DateTime.MinValue;
-                }
-                if (_lastSaveTime != DateTime.MinValue &&
-                    _lastSaveTime.AddSeconds(20) > DateTime.Now && MainWindow.ProccesIsWorked)
-                {
-                    Thread.Sleep(1000);
-                    continue;
-                }
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsTester ||
+               ServerMaster.StartProgram == ServerStartProgramm.IsOsOptimizer ||
+                ServerMaster.StartProgram == ServerStartProgramm.IsOsMiner)
+            {
+                return;
+            }
 
-                _lastSaveTime = DateTime.Now;
-                _neadToSave = false;
+            _neadToSave = false;
 
-                if (MainWindow.ProccesIsWorked == false)
-                { // если приложение закрывается
-                    return;
-                }
-
-                try
+            try
+            {
+                using (StreamWriter writer = new StreamWriter(@"Engine\" + _name + @"DealController.txt", false))
                 {
-                    using (StreamWriter writer = new StreamWriter(@"Engine\" + _name + @"DealController.txt", false))
+                    List<Position> deals = _deals;
+
+                    StringBuilder result = new StringBuilder();
+
+                    for (int i = 0; deals != null && i < deals.Count; i++)
                     {
-                        List<Position> deals = _deals;
-                        string result = "";
-                        for (int i = 0; deals != null && i < deals.Count; i++)
-                        {
-                            result += deals[i].GetStringForSave() + "\r\n";
-                        }
-
-                        writer.Write(result);
+                        result.Append(deals[i].GetStringForSave() + "\r\n");
                     }
-                }
-                catch (Exception error)
-                {
-                    SendNewLogMessage(error.ToString(), LogMessageType.Error);
-                }
 
-                if (!MainWindow.ProccesIsWorked)
-                { // если у нас сохранение перед закрытием
-                    return;
+                    writer.Write(result);
                 }
             }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+        }
+
+        /// <summary>
+        /// сохранить текущее состояние позиций
+        /// </summary>
+        public void Save()
+        {
+            _neadToSave = true;
         }
 
 // работа с позицией
@@ -265,17 +326,7 @@ namespace OsEngine.Journal.Internal
                 return;
             }
 
-            // 1 проверяем, нет ли такой сделки в массиве
-
-            for (int i = 0; _deals != null && i < _deals.Count; i++)
-            {
-                if (_deals[i].Number == newPosition.Number)
-                {
-                    return;
-                }
-            }
-
-            // 2 сохраняем
+            // сохраняем
 
             if (_deals == null)
             {
@@ -287,14 +338,10 @@ namespace OsEngine.Journal.Internal
                 _deals.Add(newPosition);
             }
 
-            if (_typeWork == ConnectorWorkType.Real)
-            {
-                Save();
-            }
+            _openPositions.Add(newPosition);
 
-            PaintPosition(newPosition);
+            ProcesPosition(newPosition);
             _lastPositionChange = true;
-            _openPositionChanged = true;
 
             if (newPosition.Direction == Side.Buy)
             {
@@ -304,6 +351,8 @@ namespace OsEngine.Journal.Internal
             {
                 _openShortChanged = true;
             }
+
+            _neadToSave = true;
         }
 
         /// <summary>
@@ -316,19 +365,25 @@ namespace OsEngine.Journal.Internal
                 return;
             }
 
-            if (_deals.Remove(position))
+            _deals.Remove(position);
+
+            for (int i = 0; i < _openPositions.Count; i++)
             {
-                Save();
+                if (_openPositions[i].Number == position.Number)
+                {
+                    _openPositions.RemoveAt(i);
+                }
             }
 
-            _openPositionChanged = true;
             _openLongChanged = true;
             _openShortChanged = true;
             _closePositionChanged = true;
             _closeShortChanged = true;
             _closeLongChanged = true;
 
-            PaintPosition(position);
+            ProcesPosition(position);
+
+            _neadToSave = true;
         }
 
         /// <summary>
@@ -376,34 +431,38 @@ namespace OsEngine.Journal.Internal
                 if (isOpenOrder || isCloseOrder)
                 {
                     PositionStateType positionState = _deals[i].State;
+                    decimal lastPosVolume = _deals[i].OpenVolume;
 
                     _deals[i].SetOrder(updateOrder);
 
-                    if (_typeWork == ConnectorWorkType.Real)
+                    if (positionState != _deals[i].State ||
+                        lastPosVolume != _deals[i].OpenVolume)
                     {
-                        Save();
-                    }
-
-                    if (positionState != _deals[i].State)
-                    {
-                        _openPositionChanged = true;
                         _openLongChanged = true;
                         _openShortChanged = true;
                         _closePositionChanged = true;
                         _closeShortChanged = true;
                         _closeLongChanged = true;
+
+                        UpdeteOpenPositionArray(_deals[i]);
                     }
 
-                    if (positionState != _deals[i].State && PositionChangeEvent != null)
+                    if (positionState != _deals[i].State && PositionStateChangeEvent != null)
                     {
                         // AlertMessageManager.ThrowAlert(null, "было " + positionState + "стало" + _deals[i].State, "");
-                        PositionChangeEvent(_deals[i]);
+                        PositionStateChangeEvent(_deals[i]);
                     }
 
-                    PaintPosition(_deals[i]);
-                    return;
+                    if (lastPosVolume != _deals[i].OpenVolume && PositionNetVolumeChangeEvent != null)
+                    {
+                        PositionNetVolumeChangeEvent(_deals[i]);
+                    }
+
+                    ProcesPosition(_deals[i]);
+                    break;
                 }
             }
+            _neadToSave = true;
         }
 
         /// <summary>
@@ -424,7 +483,8 @@ namespace OsEngine.Journal.Internal
                 {
                     for (int indexCloseOrd = 0; indexCloseOrd < _deals[i].CloseOrders.Count; indexCloseOrd++)
                     {
-                        if (_deals[i].CloseOrders[indexCloseOrd].NumberMarket == trade.NumberOrderParent)
+                        if (_deals[i].CloseOrders[indexCloseOrd].NumberMarket == trade.NumberOrderParent ||
+                            _deals[i].CloseOrders[indexCloseOrd].NumberUser.ToString() == trade.NumberOrderParent)
                         {
                             isCloseOrder = true;
                             break;
@@ -438,7 +498,8 @@ namespace OsEngine.Journal.Internal
                 {
                     for (int indOpenOrd = 0; indOpenOrd < _deals[i].OpenOrders.Count; indOpenOrd++)
                     {
-                        if (_deals[i].OpenOrders[indOpenOrd].NumberMarket == trade.NumberOrderParent)
+                        if (_deals[i].OpenOrders[indOpenOrd].NumberMarket == trade.NumberOrderParent ||
+                            _deals[i].OpenOrders[indOpenOrd].NumberUser.ToString() == trade.NumberOrderParent)
                         {
                             isOpenOrder = true;
                             break;
@@ -450,16 +511,14 @@ namespace OsEngine.Journal.Internal
                 {
                     PositionStateType positionState = _deals[i].State;
 
+                    decimal lastPosVolume = _deals[i].OpenVolume;
+
                     _deals[i].SetTrade(trade);
 
-                    if (_typeWork == ConnectorWorkType.Real)
+                    if (positionState != _deals[i].State ||
+                        lastPosVolume != _deals[i].OpenVolume)
                     {
-                        Save();
-                    }
-
-                    if (positionState != _deals[i].State)
-                    {
-                        _openPositionChanged = true;
+                        UpdeteOpenPositionArray(_deals[i]);
                         _openLongChanged = true;
                         _openShortChanged = true;
                         _closePositionChanged = true;
@@ -467,14 +526,20 @@ namespace OsEngine.Journal.Internal
                         _closeLongChanged = true;
                     }
 
-                    if (positionState != _deals[i].State && PositionChangeEvent != null)
+                    if (positionState != _deals[i].State && PositionStateChangeEvent != null)
                     {
-                        PositionChangeEvent(_deals[i]);
+                        PositionStateChangeEvent(_deals[i]);
                     }
 
-                    PaintPosition(_deals[i]);
+                    if (lastPosVolume != _deals[i].OpenVolume && PositionNetVolumeChangeEvent != null)
+                    {
+                        PositionNetVolumeChangeEvent(_deals[i]);
+                    }
+
+                    ProcesPosition(_deals[i]);
                 }
             }
+            _neadToSave = true;
         }
 
         /// <summary>
@@ -505,11 +570,16 @@ namespace OsEngine.Journal.Internal
 
                     if (profitOld != positions[i].ProfitPortfolioPunkt)
                     {
-                        PaintPosition(positions[i]);
+                        ProcesPosition(positions[i]);
                     }
                 }
             }
         }
+
+        /// <summary>
+        /// пустой лист который мы возвращаем вместо null при запросе массивов
+        /// </summary>
+        private List<Position> _emptyList = new List<Position>(); 
 
         // последняя позиция
 
@@ -548,9 +618,7 @@ namespace OsEngine.Journal.Internal
 
         // открытые позиции
 
-        private bool _openPositionChanged = true;
-
-        private List<Position> _openPositions;
+        private List<Position> _openPositions = new List<Position>();
         /// <summary>
         /// взять открытые сделки
         /// </summary>
@@ -558,23 +626,25 @@ namespace OsEngine.Journal.Internal
         {
             get
             {
-                if (_openPositionChanged)
-                {
-                    _openPositionChanged = false;
-
-                    if (_deals != null && _deals.Count != 0)
-                    {
-                        _openPositions = _deals.FindAll(
-                        position => position.State != PositionStateType.Done
-                        && position.State != PositionStateType.OpeningFail);
-                    }
-                    else
-                    {
-                        _openPositions = null;
-                    }
-                }
-
                 return _openPositions;
+            }
+        }
+
+        private void UpdeteOpenPositionArray(Position position)
+        {
+            if (position.State != PositionStateType.Done && position.State != PositionStateType.OpeningFail)
+            {// это открытая позиция
+                if (_openPositions.Find(pos => pos.Number == position.Number) == null)
+                {
+                    _openPositions.Add(position);
+                }
+            }
+            else
+            {// закрытая
+                if (_openPositions.Find(pos => pos.Number == position.Number) != null)
+                {
+                    _openPositions.Remove(position);
+                }
             }
         }
 
@@ -607,6 +677,11 @@ namespace OsEngine.Journal.Internal
                     {
                         _openLongPosition = null;
                     }
+                }
+
+                if (_openLongPosition == null)
+                {
+                    return _emptyList;
                 }
                 return _openLongPosition;
             }
@@ -642,6 +717,10 @@ namespace OsEngine.Journal.Internal
                         _openShortPositions = null;
                     }
                 }
+                if (_openShortPositions == null)
+                {
+                    return _emptyList;
+                }
                 return _openShortPositions;
             }
         }
@@ -673,6 +752,10 @@ namespace OsEngine.Journal.Internal
                         _closePositions = null;
                     }
                 }
+                if (_closePositions == null)
+                {
+                    return _emptyList;
+                }
                 return _closePositions;
             }
         }
@@ -682,6 +765,7 @@ namespace OsEngine.Journal.Internal
         private bool _closeLongChanged = true;
 
         private List<Position> _closeLongPositions;
+
         /// <summary>
         /// взять закрытые сделки в Лонг
         /// </summary>
@@ -704,6 +788,10 @@ namespace OsEngine.Journal.Internal
                     {
                         _closeLongPositions = null;
                     }
+                }
+                if (_closeLongPositions == null)
+                {
+                    return _emptyList;
                 }
                 return _closeLongPositions;
             }
@@ -739,6 +827,10 @@ namespace OsEngine.Journal.Internal
                         _closeShortPositions = null;
                     }
                 }
+                if (_closeShortPositions == null)
+                {
+                    return _emptyList;
+                }
                 return _closeShortPositions;
             }
         }
@@ -752,6 +844,10 @@ namespace OsEngine.Journal.Internal
         {
             get
             {
+                if (_deals == null)
+                {
+                    return _emptyList;
+                }
                 return _deals;
             }
         }
@@ -765,6 +861,46 @@ namespace OsEngine.Journal.Internal
         }
 
 // прорисовка позиций в таблицах
+
+        private void TryPaintPositions()
+        {
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsOsOptimizer)
+            {
+                return;
+            }
+
+            try
+            {
+                if (_hostCloseDeal == null ||
+                    _hostOpenDeal == null ||
+                    _positionsToPaint.Count == 0)
+                {
+                    return;
+                }
+
+                lock (_positionPaintLocker)
+                {
+                    while (_positionsToPaint.Count != 0)
+                    {
+                        Position newElement = _positionsToPaint[0];
+
+                        if (newElement != null)
+                        {
+                            PaintPosition(newElement);
+                        }
+                        _positionsToPaint.RemoveAt(0);
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+        }
+
+        object _positionPaintLocker = new object();
+
+        private List<Position> _positionsToPaint = new List<Position>();  
 
         /// <summary>
         /// создать таблицы для прорисовки позиций
@@ -806,13 +942,15 @@ namespace OsEngine.Journal.Internal
                 colum0.HeaderText = @"Номер";
                 colum0.ReadOnly = true;
                 colum0.Width = 50;
+                colum0.ToolTipText = @"Номер позиции";
                 newGrid.Columns.Add(colum0);
 
                 DataGridViewColumn colum01 = new DataGridViewColumn();
                 colum01.CellTemplate = cell0;
-                colum01.HeaderText = @"Время";
+                colum01.HeaderText = @"Время открытия";
                 colum01.ReadOnly = true;
-                colum01.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                colum01.AutoSizeMode = DataGridViewAutoSizeColumnMode.ColumnHeader;
+                colum01.ToolTipText = @"Время совершения первой сделки по позиции";
                 newGrid.Columns.Add(colum01);
 
                 DataGridViewColumn colu = new DataGridViewColumn();
@@ -841,7 +979,7 @@ namespace OsEngine.Journal.Internal
 
                 DataGridViewColumn colum3 = new DataGridViewColumn();
                 colum3.CellTemplate = cell0;
-                colum3.HeaderText = @"Cостояние";
+                colum3.HeaderText = @"Статус";
                 colum3.ReadOnly = true;
                 colum3.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
@@ -860,7 +998,6 @@ namespace OsEngine.Journal.Internal
                 colum45.HeaderText = @"Текущий";
                 colum45.ReadOnly = true;
                 colum45.Width = 60;
-
                 newGrid.Columns.Add(colum45);
 
                 DataGridViewColumn colum5 = new DataGridViewColumn();
@@ -873,16 +1010,18 @@ namespace OsEngine.Journal.Internal
 
                 DataGridViewColumn colum6 = new DataGridViewColumn();
                 colum6.CellTemplate = cell0;
-                colum6.HeaderText = @"Цена входа";
+                colum6.HeaderText = @"Вход";
                 colum6.ReadOnly = true;
+                colum6.ToolTipText = @"Средняя цена входа";
                 colum6.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
                 newGrid.Columns.Add(colum6);
 
                 DataGridViewColumn colum61 = new DataGridViewColumn();
                 colum61.CellTemplate = cell0;
-                colum61.HeaderText = @"Цена выхода";
+                colum61.HeaderText = @"Выход";
                 colum61.ReadOnly = true;
+                colum61.ToolTipText = @"Средняя цена выхода";
                 colum61.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
                 newGrid.Columns.Add(colum61);
@@ -891,6 +1030,7 @@ namespace OsEngine.Journal.Internal
                 colum8.CellTemplate = cell0;
                 colum8.HeaderText = @"Прибыль";
                 colum8.ReadOnly = true;
+                colum8.ToolTipText = @"Прибыль в пунктах";
                 colum8.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
 
                 newGrid.Columns.Add(colum8);
@@ -934,6 +1074,21 @@ namespace OsEngine.Journal.Internal
                 SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
             return null;
+        }
+
+        /// <summary>
+        /// очистить таблицы от сделок
+        /// </summary>
+        private void ClearPositionsGrid()
+        {
+            if (_gridOpenDeal.InvokeRequired)
+            {
+                _gridOpenDeal.Invoke(new Action(ClearPositionsGrid));
+                return;
+            }
+
+            _gridOpenDeal.Rows.Clear();
+            _gridCloseDeal.Rows.Clear();
         }
 
         /// <summary>
@@ -1001,7 +1156,7 @@ namespace OsEngine.Journal.Internal
         /// <summary>
         /// прорисовать позицию в таблице
         /// </summary>
-        public void PaintPosition(Position position)
+        private void PaintPosition(Position position)
         {
             try
             {
@@ -1077,6 +1232,26 @@ namespace OsEngine.Journal.Internal
         }
 
         /// <summary>
+        /// добавить позицию в коллекцию на прорисовку
+        /// </summary>
+        public void ProcesPosition(Position position)
+        {
+            lock (_positionPaintLocker)
+            {
+                for (int i = 0; i < _positionsToPaint.Count; i++)
+                {
+                    if (_positionsToPaint[i].Number == position.Number)
+                    {
+                        _positionsToPaint[i] = position;
+                        return;
+                    }
+                }
+
+                _positionsToPaint.Add(position);
+            }
+        }
+
+        /// <summary>
         /// взять строку для таблицы представляющую позицию
         /// </summary>
         /// <param name="position">позиция</param>
@@ -1096,7 +1271,7 @@ namespace OsEngine.Journal.Internal
                 nRow.Cells[0].Value = position.Number;
 
                 nRow.Cells.Add(new DataGridViewTextBoxCell());
-                nRow.Cells[1].Value = position.TimeCreate;
+                nRow.Cells[1].Value = position.TimeOpen;
 
                 nRow.Cells.Add(new DataGridViewTextBoxCell());
                 nRow.Cells[2].Value = position.NameBot;
@@ -1126,6 +1301,7 @@ namespace OsEngine.Journal.Internal
                 nRow.Cells[10].Value = position.ClosePrice;
 
                 nRow.Cells.Add(new DataGridViewTextBoxCell());
+                
                 nRow.Cells[11].Value = position.ProfitPortfolioPunkt;
 
                 nRow.Cells.Add(new DataGridViewTextBoxCell());
@@ -1405,9 +1581,15 @@ namespace OsEngine.Journal.Internal
 
         // события
         /// <summary>
-        /// изменилось состояние сделок
+        /// изменился статус сделки
         /// </summary>
-        public event Action<Position> PositionChangeEvent;
+        public event Action<Position> PositionStateChangeEvent;
+
+        // события
+        /// <summary>
+        /// изменился открытый объём по позиции
+        /// </summary>
+        public event Action<Position> PositionNetVolumeChangeEvent;
 
         /// <summary>
         /// пользователь выбрал во всплывающем меню некое действие

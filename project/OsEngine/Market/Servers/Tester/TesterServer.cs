@@ -35,14 +35,15 @@ namespace OsEngine.Market.Servers.Tester
             _serverConnectStatus = ServerConnectStatus.Disconnect;
             ServerStatus = ServerConnectStatus.Disconnect;
             _testerRegime = TesterRegime.Pause;
-            Commiss = 0;
+            _slipageToSimpleOrder = 0;
+            _slipageToStopOrder = 0;
             StartPortfolio = 1000000;
             TypeTesterData = TesterDataType.Candle;
             Load();
 
             if (_activSet != null)
             {
-                _neadToReloadSecurities = true;
+                _needToReloadSecurities = true;
             }
 
             if (_worker == null)
@@ -50,6 +51,7 @@ namespace OsEngine.Market.Servers.Tester
                 _worker = new Thread(WorkThreadArea);
                 _worker.CurrentCulture = new CultureInfo("ru-RU");
                 _worker.IsBackground = true;
+                _worker.Name = "TesterServerThread";
                 _worker.Start();
             }
 
@@ -139,11 +141,15 @@ namespace OsEngine.Market.Servers.Tester
                 using (StreamReader reader = new StreamReader(@"Engine\" + @"TestServer.txt"))
                 {
                     _activSet = reader.ReadLine();
-                    Commiss = Convert.ToInt32(reader.ReadLine());
+                    _slipageToSimpleOrder = Convert.ToInt32(reader.ReadLine());
                     StartPortfolio = Convert.ToDecimal(reader.ReadLine());
                     Enum.TryParse(reader.ReadLine(), out _typeTesterData);
                     Enum.TryParse(reader.ReadLine(), out _sourceDataType);
                     _pathToFolder = reader.ReadLine();
+                    _slipageToStopOrder = Convert.ToInt32(reader.ReadLine());
+                    Enum.TryParse(reader.ReadLine(), out _orderExecutionType);
+                    _profitMarketIsOn = Convert.ToBoolean(reader.ReadLine());
+                    
                     reader.Close();
                 }
             }
@@ -163,12 +169,13 @@ namespace OsEngine.Market.Servers.Tester
                 using (StreamWriter writer = new StreamWriter(@"Engine\" + @"TestServer.txt", false))
                 {
                     writer.WriteLine(_activSet);
-                    writer.WriteLine(Commiss);
+                    writer.WriteLine(_slipageToSimpleOrder);
                     writer.WriteLine(StartPortfolio);
                     writer.WriteLine(_typeTesterData);
                     writer.WriteLine(_sourceDataType);
                     writer.WriteLine(_pathToFolder);
-
+                    writer.WriteLine(_orderExecutionType);
+                    writer.WriteLine(_profitMarketIsOn);
                     writer.Close();
                 }
             }
@@ -203,8 +210,6 @@ namespace OsEngine.Market.Servers.Tester
 
             ServerMaster.ClearOrders();
 
-
-
             SendLogMessage("Включен процесс тестирования с самого начала", LogMessageType.System);
 
             if (TestingStartEvent != null)
@@ -232,8 +237,6 @@ namespace OsEngine.Market.Servers.Tester
 
             TimeNow = TimeStart;
 
-            
-
             while (TimeNow.Hour != 10)
             {
                TimeNow = TimeNow.AddHours(-1);
@@ -253,8 +256,6 @@ namespace OsEngine.Market.Servers.Tester
             {
                 TimeNow = TimeNow.AddMilliseconds(-1);
             }
-
-
 
             if (_portfolios != null && _portfolios.Count != 0)
             {
@@ -276,6 +277,10 @@ namespace OsEngine.Market.Servers.Tester
         /// </summary>
         public void TestingFast()
         {
+            if (_dataIsActive == false)
+            {
+                return;
+            }
             if (TestingFastEvent != null)
             {
                 TestingFastEvent();
@@ -414,6 +419,7 @@ namespace OsEngine.Market.Servers.Tester
             {
                 ReloadSecurities();
             }
+            Save();
         }
 
         public void ReloadSecurities()
@@ -430,7 +436,7 @@ namespace OsEngine.Market.Servers.Tester
 
             // обновляем
             
-            _neadToReloadSecurities = true;
+            _needToReloadSecurities = true;
 
             if (NeadToReconnectEvent != null)
             {
@@ -484,10 +490,6 @@ namespace OsEngine.Market.Servers.Tester
         {
             get { return _activSet; }
         }
-        /// <summary>
-        /// количество пунктов заложеные на комиссию / проскальзывание
-        /// </summary>
-        public int Commiss;
 
         /// <summary>
         /// минимальное время которое можно задать для синхронизации
@@ -625,7 +627,7 @@ namespace OsEngine.Market.Servers.Tester
         /// <summary>
         /// пора ли перезагружать бумаги в директории
         /// </summary>
-        private bool _neadToReloadSecurities;
+        private bool _needToReloadSecurities;
 
         /// <summary>
         /// режим тестирования
@@ -655,9 +657,9 @@ namespace OsEngine.Market.Servers.Tester
                         }
                     }
 
-                    if (_neadToReloadSecurities)
+                    if (_needToReloadSecurities)
                     {
-                        _neadToReloadSecurities = false;
+                        _needToReloadSecurities = false;
                         _testerRegime = TesterRegime.Pause;
                         LoadSecurities();
                     }
@@ -716,7 +718,6 @@ namespace OsEngine.Market.Servers.Tester
             portfolio.ValueBlocked = 0;
             portfolio.ValueCurrent = 1000000;
             ProfitArray = new List<decimal>();
-            ProfitArray.Add(portfolio.ValueBegin);
 
             _portfolios = new List<Portfolio>();
 
@@ -728,7 +729,13 @@ namespace OsEngine.Market.Servers.Tester
         /// </summary>
         private void LoadSecurities()
         {
-            if (_sourceDataType == TesterSourceDataType.Set && !string.IsNullOrWhiteSpace(_activSet))
+            if ((_sourceDataType == TesterSourceDataType.Set && (string.IsNullOrWhiteSpace(_activSet) || !Directory.Exists(_activSet))) ||
+                (_sourceDataType == TesterSourceDataType.Folder && (string.IsNullOrWhiteSpace(_pathToFolder) || !Directory.Exists(_pathToFolder))))
+            {
+                return;
+            }
+
+            if (_sourceDataType == TesterSourceDataType.Set)
             { // сеты данных Геркулеса
                 string[] directories = Directory.GetDirectories(_activSet);
 
@@ -745,7 +752,7 @@ namespace OsEngine.Market.Servers.Tester
 
                 _dataIsReady = true;
             }
-            else if (_sourceDataType == TesterSourceDataType.Folder&& !string.IsNullOrWhiteSpace(_pathToFolder))
+            else // if (_sourceDataType == TesterSourceDataType.Folder)
             { // простые файлы из папки
 
                 string[] files = Directory.GetFiles(_pathToFolder);
@@ -768,13 +775,18 @@ namespace OsEngine.Market.Servers.Tester
         /// <param name="path">путь к папке с инструментом</param>
         private void LoadSeciruty(string path)
         {
+            string[] directories = Directory.GetDirectories(path);
+
+            if (directories.Length == 0)
+            {
+                return;
+            }
+
             TimeMax = DateTime.MinValue;
             TimeEnd = DateTime.MaxValue;
             TimeMin = DateTime.MaxValue;
             TimeStart = DateTime.MinValue;
             TimeNow = DateTime.MinValue;
-
-            string[] directories = Directory.GetDirectories(path);
 
             for (int i = 0; i < directories.Length; i++)
             {
@@ -865,10 +877,10 @@ namespace OsEngine.Market.Servers.Tester
                         Candle candleN = new Candle();
                         candleN.SetCandleFromString(reader.ReadLine());
 
-                        decimal open = (decimal)Convert.ToDouble(candleN.Open);
-                        decimal high = (decimal)Convert.ToDouble(candleN.High);
-                        decimal low = (decimal)Convert.ToDouble(candleN.Low);
-                        decimal close = (decimal)Convert.ToDouble(candleN.Close);
+                        decimal open = (decimal) Convert.ToDouble(candleN.Open);
+                        decimal high = (decimal) Convert.ToDouble(candleN.High);
+                        decimal low = (decimal) Convert.ToDouble(candleN.Low);
+                        decimal close = (decimal) Convert.ToDouble(candleN.Close);
 
                         if (open.ToString(culture).Split(',').Length > 1 ||
                             high.ToString(culture).Split(',').Length > 1 ||
@@ -938,14 +950,14 @@ namespace OsEngine.Market.Servers.Tester
 
                             for (int i3 = open.ToString(culture).Length - 1; open.ToString(culture)[i3] == '0'; i3--)
                             {
-                                lenght = lenght * 10;
+                                lenght = lenght*10;
                             }
 
                             int lengthLow = 1;
 
                             for (int i3 = low.ToString(culture).Length - 1; low.ToString(culture)[i3] == '0'; i3--)
                             {
-                                lengthLow = lengthLow * 10;
+                                lengthLow = lengthLow*10;
 
                                 if (lenght > lengthLow)
                                 {
@@ -957,7 +969,7 @@ namespace OsEngine.Market.Servers.Tester
 
                             for (int i3 = high.ToString(culture).Length - 1; high.ToString(culture)[i3] == '0'; i3--)
                             {
-                                lengthHigh = lengthHigh * 10;
+                                lengthHigh = lengthHigh*10;
 
                                 if (lenght > lengthHigh)
                                 {
@@ -969,7 +981,7 @@ namespace OsEngine.Market.Servers.Tester
 
                             for (int i3 = close.ToString(culture).Length - 1; close.ToString(culture)[i3] == '0'; i3--)
                             {
-                                lengthClose = lengthClose * 10;
+                                lengthClose = lengthClose*10;
 
                                 if (lenght > lengthClose)
                                 {
@@ -982,8 +994,8 @@ namespace OsEngine.Market.Servers.Tester
                             }
 
                             if (minPriceStep == 1 &&
-                                open % 5 == 0 && high % 5 == 0 &&
-                                close % 5 == 0 && low % 5 == 0)
+                                open%5 == 0 && high%5 == 0 &&
+                                close%5 == 0 && low%5 == 0)
                             {
                                 countFive++;
                             }
@@ -1010,6 +1022,7 @@ namespace OsEngine.Market.Servers.Tester
                         lastString = reader.ReadLine();
                     }
 
+
                     Candle candle3 = new Candle();
                     candle3.SetCandleFromString(lastString);
                     security[security.Count - 1].TimeEnd = candle3.TimeStart;
@@ -1019,8 +1032,10 @@ namespace OsEngine.Market.Servers.Tester
                 {
                     security.Remove(security[security.Count - 1]);
                 }
-
-                reader.Close();
+                finally
+                {
+                    reader.Close();
+                }
             }
             
  // сохраняем бумаги
@@ -1406,11 +1421,11 @@ namespace OsEngine.Market.Servers.Tester
                         MarketDepth tradeN = new MarketDepth();
                         tradeN.SetMarketDepthFromString(reader.ReadLine());
 
-                        decimal open = (decimal)Convert.ToDouble(tradeN.Asks[0].Price);
+                        decimal open = (decimal)Convert.ToDouble(tradeN.Bids[0].Price);
 
                         if (open == 0)
                         {
-                            open = (decimal)Convert.ToDouble(tradeN.Bids[0].Price);
+                            open = (decimal)Convert.ToDouble(tradeN.Asks[0].Price);
                         }
 
                         if (open.ToString(culture).Split(',').Length > 1)
@@ -1638,6 +1653,8 @@ namespace OsEngine.Market.Servers.Tester
             }
         }
 
+// проверка исполнения ордеров
+
         /// <summary>
         /// проверить ордера на исполненность
         /// </summary>
@@ -1654,7 +1671,7 @@ namespace OsEngine.Market.Servers.Tester
                 Order order = OrdersActiv[i];
                 // проверяем наличие инструмента на рынке
                 SecurityTester security =
-                    SecuritiesTester.Find(
+                    _candleSeriesTesterActivate.Find(
                         tester =>
                             tester.Security.Name == order.SecurityNameCode &&
                             (tester.LastCandle != null || tester.LastTradeSeries != null ||
@@ -1671,7 +1688,7 @@ namespace OsEngine.Market.Servers.Tester
 
                     for (int indexTrades = 0; trades != null && indexTrades < trades.Count; indexTrades++)
                     {
-                        if (CheckOrdersInTickTest(order, trades[indexTrades].Price,false))
+                        if (CheckOrdersInTickTest(order, trades[indexTrades],false))
                         {
                             i--;
                             break;
@@ -1710,7 +1727,7 @@ namespace OsEngine.Market.Servers.Tester
             decimal minPrice = decimal.MaxValue;
             decimal maxPrice = 0;
             decimal openPrice = 0;
-            DateTime time = DateTime.MinValue;
+            DateTime time = ServerTime;
 
             if (lastCandle != null)
             {
@@ -1729,8 +1746,18 @@ namespace OsEngine.Market.Servers.Tester
             // проверяем, прошёл ли ордер
             if (order.Side == Side.Buy)
             {
-                if ((order.Price > minPrice && order.IsStopOrProfit == false) ||
-                    (order.Price > minPrice && order.IsStopOrProfit))
+                if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price > minPrice) 
+                    ||
+                    (OrderExecutionType == OrderExecutionType.Touch && order.Price >= minPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty && 
+                    _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection && 
+                    order.Price > minPrice) 
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                    _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                    order.Price >= minPrice)
+                    )
                 {// исполняем
 
                     decimal realPrice = order.Price;
@@ -1745,21 +1772,61 @@ namespace OsEngine.Market.Servers.Tester
                         realPrice = maxPrice;
                     }
 
-                    ExecuteOnBoardOrder(order, realPrice, time);
-                    OrdersActiv.Remove(order);
+                    int slipage = 0;
+
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
+                    {
+                        slipage = _slipageToStopOrder;
+                    }
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
+                    {
+                        slipage = _slipageToSimpleOrder;
+                    }
+
+                    ExecuteOnBoardOrder(order, realPrice, time, slipage);
+
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
+                    }
+
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        {_lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection;}
+                        else
+                        {_lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch;}
+                    }
+
                     return true;
                 }
             }
 
             if (order.Side == Side.Sell)
             {
-                if ((order.Price < maxPrice && order.IsStopOrProfit == false) ||
-                    (order.Price < maxPrice && order.IsStopOrProfit))
-                {// исполняем
+                if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price < maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.Touch && order.Price <= maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                     _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection &&
+                     order.Price < maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                     _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                     order.Price <= maxPrice)
+                    )
+                {
+// исполняем
                     decimal realPrice = order.Price;
 
                     if (realPrice < openPrice && order.IsStopOrProfit == false)
-                    { // если заявка не котировачная и выставлена в рынок
+                    {
+                        // если заявка не котировачная и выставлена в рынок
                         realPrice = openPrice;
                     }
                     else if (order.IsStopOrProfit && order.Price < minPrice)
@@ -1767,8 +1834,35 @@ namespace OsEngine.Market.Servers.Tester
                         realPrice = minPrice;
                     }
 
-                    ExecuteOnBoardOrder(order, realPrice, time);
-                    OrdersActiv.Remove(order);
+                    int slipage = 0;
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
+                    {
+                        slipage = _slipageToStopOrder;
+                    }
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
+                    {
+                        slipage = _slipageToSimpleOrder;
+                    }
+
+                    ExecuteOnBoardOrder(order, realPrice, time, slipage);
+
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
+                    }
+
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection; }
+                        else
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch; }
+                    }
+
                     return true;
                 }
             }
@@ -1791,7 +1885,7 @@ namespace OsEngine.Market.Servers.Tester
         /// <param name="firstTime">первая ли эта проверка на исполнение. Если первая то возможно исполнение по текущей цене.
         /// есил false, то исполнение только по цене ордером. В этом случае мы котируем</param>
         /// <returns></returns>
-        private bool CheckOrdersInTickTest(Order order, decimal lastTrade, bool firstTime)
+        private bool CheckOrdersInTickTest(Order order, Trade lastTrade, bool firstTime)
         {
             SecurityTester security = SecuritiesTester.Find(tester => tester.Security.Name == order.SecurityNameCode);
 
@@ -1803,41 +1897,97 @@ namespace OsEngine.Market.Servers.Tester
             // проверяем, прошёл ли ордер
             if (order.Side == Side.Buy)
             {
-                if ((order.Price > lastTrade) 
-                   // &&!firstTime
+                 if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price > lastTrade.Price) 
+                    ||
+                    (OrderExecutionType == OrderExecutionType.Touch && order.Price >= lastTrade.Price)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty && 
+                    _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection &&
+                    order.Price > lastTrade.Price) 
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                    _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                    order.Price >= lastTrade.Price)
                     )
                 {// исполняем
-                    if (firstTime)
+                    int slipage = 0;
+
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
                     {
-                        ExecuteOnBoardOrder(order, lastTrade,ServerTime);
+                        slipage = _slipageToStopOrder;
                     }
-                    else
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
                     {
-                        ExecuteOnBoardOrder(order, order.Price, ServerTime);
+                        slipage = _slipageToSimpleOrder;
                     }
 
-                    OrdersActiv.Remove(order);
+                    ExecuteOnBoardOrder(order, lastTrade.Price, ServerTime, slipage);
+
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
+                    }
+
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection; }
+                        else
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch; }
+                    }
+
                     return true;
                 }
             }
 
             if (order.Side == Side.Sell)
             {
-                if ((order.Price < lastTrade)
-                    //&&!firstTime
-                    )
+                if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price < lastTrade.Price)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.Touch && order.Price <= lastTrade.Price)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                   _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection &&
+                   order.Price < lastTrade.Price)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                   _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                   order.Price <= lastTrade.Price)
+                   )
                 {// исполняем
+                    int slipage = 0;
 
-                    if (firstTime)
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
                     {
-                        ExecuteOnBoardOrder(order, lastTrade, ServerTime);
+                        slipage = _slipageToStopOrder;
                     }
-                    else
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
                     {
-                        ExecuteOnBoardOrder(order, order.Price, ServerTime);
+                        slipage = _slipageToSimpleOrder;
+                    }
+                    ExecuteOnBoardOrder(order, lastTrade.Price, ServerTime, slipage);
+
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
                     }
 
-                    OrdersActiv.Remove(order);
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection; }
+                        else
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch; }
+                    }
+
                     return true;
                 }
             }
@@ -1864,9 +2014,8 @@ namespace OsEngine.Market.Servers.Tester
             {
                 return false;
             }
-            decimal minPrice = lastMarketDepth.Bids[0].Price;
-            decimal maxPrice = lastMarketDepth.Asks[0].Price;
-            decimal openPrice = lastMarketDepth.Bids[0].Price;
+            decimal minPrice = lastMarketDepth.Asks[0].Price;
+            decimal maxPrice = lastMarketDepth.Bids[0].Price;
 
             DateTime time = lastMarketDepth.Time;
 
@@ -1879,46 +2028,98 @@ namespace OsEngine.Market.Servers.Tester
             // проверяем, прошёл ли ордер
             if (order.Side == Side.Buy)
             {
-                if ((order.Price > minPrice && order.IsStopOrProfit == false) ||
-                    (order.Price > minPrice && order.IsStopOrProfit))
-                {// исполняем
-
+                if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price > minPrice)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.Touch && order.Price >= minPrice)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                   _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection &&
+                   order.Price > minPrice)
+                   ||
+                   (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                   _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                   order.Price >= minPrice)
+                   )
+                {
                     decimal realPrice = order.Price;
 
-                    if (realPrice > openPrice && order.IsStopOrProfit == false)
+                    int slipage = 0;
+
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
                     {
-                        // если заявка не котировачная и выставлена в рынок
-                        realPrice = openPrice;
+                        slipage = _slipageToStopOrder;
                     }
-                    else if (order.IsStopOrProfit && order.Price > maxPrice)
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
                     {
-                        realPrice = maxPrice;
+                        slipage = _slipageToSimpleOrder;
+                    }
+                    ExecuteOnBoardOrder(order, realPrice, time, slipage);
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
                     }
 
-                    ExecuteOnBoardOrder(order, realPrice, time);
-                    OrdersActiv.Remove(order);
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection; }
+                        else
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch; }
+                    }
                     return true;
                 }
             }
 
             if (order.Side == Side.Sell)
             {
-                if ((order.Price < maxPrice && order.IsStopOrProfit == false) ||
-                    (order.Price < maxPrice && order.IsStopOrProfit))
-                {// исполняем
+                if ((OrderExecutionType == OrderExecutionType.Intersection && order.Price < maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.Touch && order.Price <= maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                     _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Intersection &&
+                     order.Price < maxPrice)
+                    ||
+                    (OrderExecutionType == OrderExecutionType.FiftyFifty &&
+                     _lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch &&
+                     order.Price <= maxPrice)
+                    )
+                {
+                    // исполняем
                     decimal realPrice = order.Price;
 
-                    if (realPrice < openPrice && order.IsStopOrProfit == false)
-                    { // если заявка не котировачная и выставлена в рынок
-                        realPrice = openPrice;
-                    }
-                    else if (order.IsStopOrProfit && order.Price < minPrice)
+                    int slipage = 0;
+
+                    if (order.IsStopOrProfit && _slipageToStopOrder > 0)
                     {
-                        realPrice = minPrice;
+                        slipage = _slipageToStopOrder;
+                    }
+                    else if (order.IsStopOrProfit == false && _slipageToSimpleOrder > 0)
+                    {
+                        slipage = _slipageToSimpleOrder;
                     }
 
-                    ExecuteOnBoardOrder(order, realPrice, time);
-                    OrdersActiv.Remove(order);
+                    ExecuteOnBoardOrder(order, realPrice, time, slipage);
+                    for (int i = 0; i < OrdersActiv.Count; i++)
+                    {
+                        if (OrdersActiv[i].NumberUser == order.NumberUser)
+                        {
+                            OrdersActiv.RemoveAt(i);
+                            break;
+                        }
+                    }
+
+                    if (OrderExecutionType == OrderExecutionType.FiftyFifty)
+                    {
+                        if (_lastOrderExecutionTypeInFiftyFiftyType == OrderExecutionType.Touch)
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Intersection; }
+                        else
+                        { _lastOrderExecutionTypeInFiftyFiftyType = OrderExecutionType.Touch; }
+                    }
                     return true;
                 }
             }
@@ -1932,6 +2133,48 @@ namespace OsEngine.Market.Servers.Tester
             }
             return false;
         }
+
+        /// <summary>
+        /// тип исполнения ордеров
+        /// </summary>
+        public OrderExecutionType OrderExecutionType
+        {
+            get { return _orderExecutionType; }
+            set
+            {
+                _orderExecutionType = value;
+                Save();
+            }
+        }
+        private OrderExecutionType _orderExecutionType;
+
+        /// <summary>
+        /// следующий по очереди тип исполнения заявки, 
+        /// если мы выбрали тип 50*50 и они должны чередоваться
+        /// </summary>
+        private OrderExecutionType _lastOrderExecutionTypeInFiftyFiftyType;
+
+        public int SlipageToSimpleOrder
+        {
+            get { return _slipageToSimpleOrder; }
+            set
+            {
+                _slipageToSimpleOrder = value;
+                Save();
+            }
+        }
+        private int _slipageToSimpleOrder;
+
+        public int SlipageToStopOrder
+        {
+            get { return _slipageToStopOrder; }
+            set
+            {
+                _slipageToStopOrder = value;
+                Save();
+            }
+        }
+        private int _slipageToStopOrder;
 
 // хранение дополнительных данных о бумагах: ГО, Мультипликаторы, Лоты
 
@@ -2143,13 +2386,30 @@ namespace OsEngine.Market.Servers.Tester
         /// </summary>
         public event Action<DateTime> TimeServerChangeEvent;
 
-
 // прибыли и убытки биржи
 
         public List<decimal> ProfitArray;
 
+        /// <summary>
+        /// включен ли рассчёт внутреннего профита биржи
+        /// </summary>
+        public bool ProfitMarketIsOn
+        {
+            get { return _profitMarketIsOn; }
+            set
+            {
+                _profitMarketIsOn = value;
+                Save();
+            }
+        }
+        private bool _profitMarketIsOn;
+
         public void AddProfit(decimal profit)
         {
+            if(_profitMarketIsOn == false)
+            {
+                return;
+            }
             _portfolios[0].ValueCurrent += profit;
             ProfitArray.Add(_portfolios[0].ValueCurrent);
 
@@ -2366,13 +2626,13 @@ namespace OsEngine.Market.Servers.Tester
                 if (TypeTesterData == TesterDataType.MarketDepthAllCandleState ||
                     TypeTesterData == TesterDataType.MarketDepthOnlyReadyCandle)
                 {
-                    timeFrameBuilder.CandleCreateType = CandleSeriesCreateDataType.MarketDepth;
+                    timeFrameBuilder.CandleMarketDataType = CandleMarketDataType.MarketDepth;
                 }
 
                 if (TypeTesterData == TesterDataType.TickAllCandleState ||
                     TypeTesterData == TesterDataType.TickOnlyReadyCandle)
                 {
-                    timeFrameBuilder.CandleCreateType = CandleSeriesCreateDataType.Tick;
+                    timeFrameBuilder.CandleMarketDataType = CandleMarketDataType.Tick;
                 }
 
                 CandleSeries series = new CandleSeries(timeFrameBuilder, security);
@@ -2380,7 +2640,7 @@ namespace OsEngine.Market.Servers.Tester
    // запускаем бумагу на выгрузку
 
                 if (TypeTesterData != TesterDataType.Candle &&
-                    timeFrameBuilder.CandleCreateType == CandleSeriesCreateDataType.Tick)
+                    timeFrameBuilder.CandleMarketDataType == CandleMarketDataType.Tick)
                 {
                     if (_candleSeriesTesterActivate.Find(tester => tester.Security.Name == namePaper &&
                                                                    tester.DataType == SecurityTesterDataType.Tick) == null)
@@ -2400,7 +2660,7 @@ namespace OsEngine.Market.Servers.Tester
                 }
 
                 else if (TypeTesterData != TesterDataType.Candle &&
-                         timeFrameBuilder.CandleCreateType == CandleSeriesCreateDataType.MarketDepth)
+                         timeFrameBuilder.CandleMarketDataType == CandleMarketDataType.MarketDepth)
                 {
                     if (_candleSeriesTesterActivate.Find(tester => tester.Security.Name == namePaper &&
                                                                    tester.DataType == SecurityTesterDataType.MarketDepth) == null)
@@ -2825,11 +3085,15 @@ namespace OsEngine.Market.Servers.Tester
         /// </summary>
         private int _iteratorNumbersMyTrades;
 
+
         /// <summary>
         /// выставить ордер на биржу
         /// </summary>
         public void ExecuteOrder(Order order)
         {
+
+            order.TimeCreate = ServerTime;
+
             if (OrdersActiv.Count != 0)
             {
                 for (int i = 0; i < OrdersActiv.Count; i++)
@@ -2919,7 +3183,10 @@ namespace OsEngine.Market.Servers.Tester
             if (orderOnBoard.IsStopOrProfit)
             {
                 SecurityTester security = SecuritiesTester.Find(tester => tester.Security.Name == order.SecurityNameCode);
-                CheckOrdersInCandleTest(order, security.LastCandle);
+                if (security.DataType == SecurityTesterDataType.Candle)
+                { // прогон на свечках
+                    CheckOrdersInCandleTest(order, security.LastCandle);
+                }
             }
         }
 
@@ -2970,7 +3237,15 @@ namespace OsEngine.Market.Servers.Tester
                 return;
             }
 
-            OrdersActiv.Remove(orderToClose);
+            for (int i = 0; i < OrdersActiv.Count; i++)
+            {
+                if (OrdersActiv[i].NumberUser == order.NumberUser)
+                {
+                    OrdersActiv.RemoveAt(i);
+                    break;
+                }
+            }
+
             orderToClose.State = OrderStateType.Cancel;
 
             if (NewOrderIncomeEvent != null)
@@ -3007,7 +3282,7 @@ namespace OsEngine.Market.Servers.Tester
         /// <summary>
         /// исполнить ордер на бирже
         /// </summary>
-        private void ExecuteOnBoardOrder(Order order,decimal price, DateTime time)
+        private void ExecuteOnBoardOrder(Order order,decimal price, DateTime time, int slipage)
         {
             decimal realPrice = price;
 
@@ -3018,7 +3293,7 @@ namespace OsEngine.Market.Servers.Tester
             }
 
 
-            if (Commiss != 0)
+            if (slipage != 0)
             {
                 if (order.Side == Side.Buy)
                 {
@@ -3026,7 +3301,7 @@ namespace OsEngine.Market.Servers.Tester
 
                     if (mySecurity != null && mySecurity.PriceStep != 0)
                     {
-                        realPrice += mySecurity.PriceStep*Commiss;
+                        realPrice += mySecurity.PriceStep * slipage;
                     }
                 }
 
@@ -3036,12 +3311,10 @@ namespace OsEngine.Market.Servers.Tester
 
                     if (mySecurity != null && mySecurity.PriceStep != 0)
                     {
-                        realPrice -= mySecurity.PriceStep * Commiss;
+                        realPrice -= mySecurity.PriceStep * slipage;
                     }
                 }
             }
-
-
 
             MyTrade trade = new MyTrade();
             trade.NumberOrderParent = order.NumberMarket;
@@ -3064,7 +3337,6 @@ namespace OsEngine.Market.Servers.Tester
 
             ChangePosition(order);
         }
-
 
 // работа с логами
 
@@ -3107,7 +3379,11 @@ namespace OsEngine.Market.Servers.Tester
     {
         public SecurityTester()
         {
-            ServerMaster.GetServers()[0].NewCandleIncomeEvent += SecurityTester_NewCandleIncomeEvent;
+            if (ServerMaster.GetServers() != null &&
+                ServerMaster.GetServers()[0] != null)
+            {
+                ServerMaster.GetServers()[0].NewCandleIncomeEvent += SecurityTester_NewCandleIncomeEvent;
+            }
         }
 
         void SecurityTester_NewCandleIncomeEvent(CandleSeries series)
@@ -3586,5 +3862,27 @@ namespace OsEngine.Market.Servers.Tester
         /// миллисекунда
         /// </summary>
         MilliSecond
+    }
+
+    /// <summary>
+    /// тип исполнения ордера
+    /// </summary>
+    public enum OrderExecutionType
+    {
+        /// <summary>
+        /// Пересечение
+        /// </summary>
+        Intersection,
+
+        /// <summary>
+        /// Прикосновение
+        /// </summary>
+        Touch,
+
+        /// <summary>
+        /// 50 / 50
+        /// </summary>
+        FiftyFifty
+
     }
 }

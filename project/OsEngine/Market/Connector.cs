@@ -4,18 +4,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Threading;
-using System.Windows.Forms;
-using System.Windows.Forms.Integration;
 using OsEngine.Alerts;
 using OsEngine.Entity;
 using OsEngine.Logging;
 using OsEngine.Market.Servers;
-using OsEngine.Market.Servers.AstsBridge;
 using OsEngine.Market.Servers.Tester;
 
 namespace OsEngine.Market
@@ -36,17 +31,16 @@ namespace OsEngine.Market
         {
             _name = name;
 
-            TimeFrameBuilder = new TimeFrameBuilder(_name);
+            _timeFrameBuilder = new TimeFrameBuilder(_name);
             ServerType = ServerType.Unknown;
             Load();
             _canSave = true;
-
-            CreateGlass();
 
             if (!string.IsNullOrWhiteSpace(NamePaper))
             {
                 _subscrabler = new Thread(Subscrable);
                 _subscrabler.CurrentCulture = new CultureInfo("ru-RU");
+                _subscrabler.Name = "ConnectorSubscrableThread_" + UniqName; 
                 _subscrabler.IsBackground = true;
                 _subscrabler.Start();
             }
@@ -121,7 +115,7 @@ namespace OsEngine.Market
         /// </summary>
         public void Delete()
         {
-            TimeFrameBuilder.Delete();
+            _timeFrameBuilder.Delete();
             if (File.Exists(@"Engine\" + _name + @"ConnectorPrime.txt"))
             {
                 File.Delete(@"Engine\" + _name + @"ConnectorPrime.txt");
@@ -143,20 +137,7 @@ namespace OsEngine.Market
                 _myServer.NeadToReconnectEvent -= _myServer_NeadToReconnectEvent;
             }
 
-            if (_subscrabler != null)
-            {
-                try
-                {
-                    if (_subscrabler.IsAlive)
-                    {
-                        _subscrabler.Abort();
-                    }
-                }
-                catch 
-                {
-                    //SendNewLogMessage(error.ToString(), LogMessageType.Error);
-                }
-            }
+            _neadToStopThread = true;
         }
 
         /// <summary>
@@ -166,7 +147,8 @@ namespace OsEngine.Market
         {
             try
             {
-                if (ServerMaster.GetServers() == null)
+                if (ServerMaster.GetServers() == null||
+                    ServerMaster.GetServers().Count == 0)
                 {
                     AlertMessageSimpleUi uiMessage = new AlertMessageSimpleUi("Ни одного соединения с биржей не найдено! " +
                                                         " Нажмите на кнопку ^Сервер^ ");
@@ -264,23 +246,43 @@ namespace OsEngine.Market
             }
         }
 
-        public TimeFrameBuilder TimeFrameBuilder;
+        /// <summary>
+        /// объект сохраняющий в себе настройки для построения свечек
+        /// </summary>
+        private TimeFrameBuilder _timeFrameBuilder;
 
         /// <summary>
         /// способ создания свечей: из тиков или из стаканов
         /// </summary>
-        public CandleSeriesCreateDataType CandleCreateType
+        public CandleMarketDataType CandleMarketDataType
         {
             set
             {
-                if (value == TimeFrameBuilder.CandleCreateType)
+                if (value == _timeFrameBuilder.CandleMarketDataType)
                 {
                     return;
                 }
-                TimeFrameBuilder.CandleCreateType = value;
+                _timeFrameBuilder.CandleMarketDataType = value;
                 Reconnect();
             }
-            get { return TimeFrameBuilder.CandleCreateType; }
+            get { return _timeFrameBuilder.CandleMarketDataType; }
+        }
+
+        /// <summary>
+        /// способ создания свечей: из тиков или из стаканов
+        /// </summary>
+        public CandleCreateMethodType CandleCreateMethodType
+        {
+            set
+            {
+                if (value == _timeFrameBuilder.CandleCreateMethodType)
+                {
+                    return;
+                }
+                _timeFrameBuilder.CandleCreateMethodType = value;
+                Reconnect();
+            }
+            get { return _timeFrameBuilder.CandleCreateMethodType; }
         }
 
         /// <summary>
@@ -288,14 +290,14 @@ namespace OsEngine.Market
         /// </summary>
         public TimeFrame TimeFrame
         {
-            get { return TimeFrameBuilder.TimeFrame; }
+            get { return _timeFrameBuilder.TimeFrame; }
             set
             {
                 try
                 {
-                    if (value != TimeFrameBuilder.TimeFrame)
+                    if (value != _timeFrameBuilder.TimeFrame)
                     {
-                        TimeFrameBuilder.TimeFrame = value;
+                        _timeFrameBuilder.TimeFrame = value;
                         Reconnect();
                     }
                 }
@@ -307,11 +309,44 @@ namespace OsEngine.Market
         }
 
         /// <summary>
+        /// хранилище переодов для дельты
+        /// </summary>
+        public decimal DeltaPeriods
+        {
+            get { return _timeFrameBuilder.DeltaPeriods; }
+            set
+            {
+                if (value == _timeFrameBuilder.DeltaPeriods)
+                {
+                    return;
+                }
+                _timeFrameBuilder.DeltaPeriods = value;
+                Reconnect();
+            }
+        }
+
+        /// <summary>
+        /// движение необходимое для закрытия свечи, когда выбран режим свечей ренко
+        /// </summary>
+        public decimal RencoPunktsToCloseCandleInRencoType
+        {
+            get { return _timeFrameBuilder.RencoPunktsToCloseCandleInRencoType; }
+            set
+            {
+                if (value != _timeFrameBuilder.RencoPunktsToCloseCandleInRencoType)
+                {
+                    _timeFrameBuilder.RencoPunktsToCloseCandleInRencoType = value;
+                    Reconnect();
+                }
+            }
+        }
+
+        /// <summary>
         /// ТаймФрейм свечек в виде TimeSpan на который подписан коннектор
         /// </summary>
         public TimeSpan TimeFrameTimeSpan
         {
-            get { return TimeFrameBuilder.TimeFrameTimeSpan; }
+            get { return _timeFrameBuilder.TimeFrameTimeSpan; }
         }
 
         /// <summary>
@@ -325,8 +360,12 @@ namespace OsEngine.Market
         public ServerType ServerType;
 
         /// <summary>
-        /// мой сервер
+        /// сервер через который идёт торговля
         /// </summary>
+        public IServer MyServer
+        {
+            get { return _myServer; }
+        }
         private IServer _myServer;
 
         /// <summary>
@@ -339,14 +378,14 @@ namespace OsEngine.Market
         /// </summary>
         public bool SetForeign
         {
-            get { return TimeFrameBuilder.SetForeign; }
+            get { return _timeFrameBuilder.SetForeign; }
             set
             {
-                if (TimeFrameBuilder.SetForeign == value)
+                if (_timeFrameBuilder.SetForeign == value)
                 {
                     return;
                 }
-                TimeFrameBuilder.SetForeign = value;
+                _timeFrameBuilder.SetForeign = value;
                 Reconnect();
             }
         }
@@ -356,12 +395,28 @@ namespace OsEngine.Market
         /// </summary>
         public int CountTradeInCandle
         {
-            get { return TimeFrameBuilder.TradeCount; }
+            get { return _timeFrameBuilder.TradeCount; }
             set
             {
-                if (value != TimeFrameBuilder.TradeCount)
+                if (value != _timeFrameBuilder.TradeCount)
                 {
-                    TimeFrameBuilder.TradeCount = value;
+                    _timeFrameBuilder.TradeCount = value;
+                    Reconnect();
+                }
+            }
+        }
+
+        /// <summary>
+        /// объём необходимый для закрытия свечи, когда выбран режим закрытия свечи по объёму
+        /// </summary>
+        public decimal VolumeToCloseCandleInVolumeType
+        {
+            get { return _timeFrameBuilder.VolumeToCloseCandleInVolumeType; }
+            set
+            {
+                if (value != _timeFrameBuilder.VolumeToCloseCandleInVolumeType)
+                {
+                    _timeFrameBuilder.VolumeToCloseCandleInVolumeType = value;
                     Reconnect();
                 }
             }
@@ -371,6 +426,21 @@ namespace OsEngine.Market
         /// эмулятор. В нём исполняются ордера в режиме эмуляции
         /// </summary>
         private readonly OrderExecutionEmulator _emulator;
+
+        /// <summary>
+        /// подключен ли коннектор на скачивание данных
+        /// </summary>
+        public bool IsConnected
+        {
+            get
+            {
+                if (_mySeries != null)
+                {
+                    return true;
+                }
+                return false;
+            }
+        }
 
 // подписка на данные 
 
@@ -385,17 +455,25 @@ namespace OsEngine.Market
                 {
                     _mySeries.СandleUpdeteEvent -= MySeries_СandleUpdeteEvent;
                     _mySeries.СandleFinishedEvent -= MySeries_СandleFinishedEvent;
+                    _mySeries.Stop();
 
                     _mySeries = null;
                 }
 
                 Save();
 
+                if (ConnectorStartedReconnectEvent != null)
+                {
+                    ConnectorStartedReconnectEvent(NamePaper, TimeFrame, TimeFrameTimeSpan, PortfolioName, ServerType);
+                }
+
+
                 if (_subscrabler == null)
                 {
                     _subscrabler = new Thread(Subscrable);
                     _subscrabler.CurrentCulture = new CultureInfo("ru-RU");
                     _subscrabler.IsBackground = true;
+                    _subscrabler.Name = "ConnectorSubscrableThread_" + UniqName; 
                     _subscrabler.Start();
 
                     if (NewCandlesChangeEvent != null)
@@ -420,6 +498,8 @@ namespace OsEngine.Market
         /// </summary>
         private object _subscrableLocker = new object();
 
+        private bool _neadToStopThread;
+
         /// <summary>
         /// подписаться на получение свечек
         /// </summary>
@@ -429,7 +509,12 @@ namespace OsEngine.Market
             {
                 while (true)
                 {
-                    Thread.Sleep(500);
+                    Thread.Sleep(50);
+
+                    if (_neadToStopThread)
+                    {
+                        return;
+                    }
 
                     if (ServerType == ServerType.Unknown ||
                         string.IsNullOrWhiteSpace(NamePaper))
@@ -448,7 +533,15 @@ namespace OsEngine.Market
                         continue;
                     }
 
-                    _myServer = servers.Find(server => server.ServerType == ServerType);
+                    try
+                    {
+                        _myServer = servers.Find(server => server.ServerType == ServerType);
+                    }
+                    catch
+                    {
+                        // ignore
+                        continue;
+                    }
 
                     if (_myServer == null)
                     {
@@ -476,14 +569,14 @@ namespace OsEngine.Market
                         _myServer.TimeServerChangeEvent += myServer_TimeServerChangeEvent;
                         _myServer.NeadToReconnectEvent += _myServer_NeadToReconnectEvent;
 
-                        if (ServerMaster.IsTester)
+                        if (ServerMaster.StartProgram == ServerStartProgramm.IsTester)
                         {
                             ((TesterServer)_myServer).TestingEndEvent -= ConnectorReal_TestingEndEvent;
                             ((TesterServer)_myServer).TestingEndEvent += ConnectorReal_TestingEndEvent;
                         }
                     }
 
-                    Thread.Sleep(500);
+                    Thread.Sleep(50);
 
                     ServerConnectStatus stat = _myServer.ServerStatus;
 
@@ -497,8 +590,13 @@ namespace OsEngine.Market
                         {
                             while (_mySeries == null)
                             {
-                                Thread.Sleep(5000);
-                                _mySeries = _myServer.StartThisSecurity(_namePaper, TimeFrameBuilder);
+                                if (_neadToStopThread)
+                                {
+                                    return;
+                                }
+
+                                Thread.Sleep(100);
+                                _mySeries = _myServer.StartThisSecurity(_namePaper, _timeFrameBuilder);
                             }
 
 
@@ -518,9 +616,9 @@ namespace OsEngine.Market
             }
         }
 
-
         void _myServer_NeadToReconnectEvent()
         {
+
             Reconnect();
         }
 
@@ -633,20 +731,18 @@ namespace OsEngine.Market
                     return;
                 }
 
-                _bestBid = bestBid;
-
-                _bestAsk = bestAsk;
+                _bestAsk = bestBid;
+                _bestBid = bestAsk;
 
                 if (EmulatorIsOn || ServerType == ServerType.Finam)
                 {
-                    _emulator.ProcessBidAsc(_bestBid, _bestAsk, MarketTime);
+                    _emulator.ProcessBidAsc(_bestAsk, _bestBid, MarketTime);
                 }
 
                 if (BestBidAskChangeEvent != null)
                 {
                     BestBidAskChangeEvent(bestBid, bestAsk);
                 }
-                PaintBidAsk(bestBid, bestAsk);
             }
             catch (Exception error)
             {
@@ -671,21 +767,19 @@ namespace OsEngine.Market
                     GlassChangeEvent(glass);
                 }
 
-                if (glass.Asks.Count == 0 ||
-                    glass.Bids.Count == 0)
+                if (glass.Bids.Count == 0 ||
+                    glass.Asks.Count == 0)
                 {
                     return;
                 }
 
-                _bestAsk = glass.Asks[0].Price;
                 _bestBid = glass.Bids[0].Price;
+                _bestAsk = glass.Asks[0].Price;
 
                 if (EmulatorIsOn)
                 {
-                    _emulator.ProcessBidAsc(_bestBid, _bestAsk, MarketTime);
+                    _emulator.ProcessBidAsc(_bestAsk, _bestBid, MarketTime);
                 }
-
-                PaintMarketDepth(glass);
             }
             catch (Exception error)
             {
@@ -698,22 +792,31 @@ namespace OsEngine.Market
         /// </summary>
         void ConnectorBot_NewTradeEvent(List<Trade> tradesList)
         {
-
             try
             {
-                if (tradesList == null || tradesList.Count == 0 || tradesList[tradesList.Count - 1] == null ||
+                if (NamePaper == null ||
+                    tradesList == null ||
+                    tradesList.Count == 0 ||
+                    tradesList[tradesList.Count - 1] == null ||
                     tradesList[tradesList.Count - 1].SecurityNameCode != NamePaper)
                 {
                     return;
                 }
+            }
+            catch
+            {
+                // ошибка сдесь трудноуловимая. Кто поймёт что не так - молодец
+            }
 
+            try
+            {
                 if (TickChangeEvent != null)
                 {
                     TickChangeEvent(tradesList);
                 }
             }
             catch (Exception error)
-            {
+             {
                 SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
         }
@@ -741,12 +844,12 @@ namespace OsEngine.Market
         /// <summary>
         /// лучшая цена покупателя
         /// </summary>
-        private decimal _bestAsk;
+        private decimal _bestBid;
 
         /// <summary>
         ///  лучшая цена продавца
         /// </summary>
-        private decimal _bestBid;
+        private decimal _bestAsk;
 
 // внешний интерфейс доступа к данным
 
@@ -806,24 +909,24 @@ namespace OsEngine.Market
         }
 
         /// <summary>
-        /// взять лучшую цену продажи инструмента этого коннектора
-        /// </summary>
-        public decimal BestBid
-        {
-            get
-            {
-                return _bestBid;
-            }
-        }
-
-        /// <summary>
-        /// взять лучшую цену покупки инструмента этого коннектора
+        /// взять лучшую цену продавца в стакане
         /// </summary>
         public decimal BestAsk
         {
             get
             {
                 return _bestAsk;
+            }
+        }
+
+        /// <summary>
+        /// взять лучшую цену покупателя в стакане
+        /// </summary>
+        public decimal BestBid
+        {
+            get
+            {
+                return _bestBid;
             }
         }
 
@@ -863,6 +966,13 @@ namespace OsEngine.Market
                 {
                     return;
                 }
+
+                if (_myServer.ServerStatus == ServerConnectStatus.Disconnect)
+                {
+                    SendNewLogMessage("Попытка выставить ордер при выключенном соединении",LogMessageType.Error);
+                    return;
+                }
+
                 order.SecurityNameCode = NamePaper;
                 order.PortfolioNumber = PortfolioName;
                 order.ServerType = ServerType;
@@ -958,504 +1068,10 @@ namespace OsEngine.Market
         /// </summary>
         public event Action<DateTime> TimeChangeEvent;
 
-// прорисовка элементов управления
-
         /// <summary>
-        /// область для размещения стакана
+        /// коннектор начинает процедуру переподключения
         /// </summary>
-        private WindowsFormsHost _hostGlass;
-
-        /// <summary>
-        /// таблица стакана
-        /// </summary>
-        DataGridView _glassBox;
-
-        /// <summary>
-        /// элемент для отрисовки выбранной пользователем цены
-        /// </summary>
-        private System.Windows.Controls.TextBox _textBoxLimitPrice;
-
-        /// <summary>
-        /// последняя выбранная пользователем цена
-        /// </summary>
-        private decimal _lastSelectPrice;
-
-        /// <summary>
-        /// загрузить контролы в коннектор
-        /// </summary>
-        public void CreateGlass()
-        {
-            try
-            {
-                _glassBox = new DataGridView();
-                _glassBox.AllowUserToOrderColumns = false;
-                _glassBox.AllowUserToResizeRows = false;
-                _glassBox.AllowUserToDeleteRows = false;
-                _glassBox.AllowUserToAddRows = false;
-                _glassBox.RowHeadersVisible = false;
-                _glassBox.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-                _glassBox.MultiSelect = false;
-                _glassBox.SelectionChanged += _glassBox_SelectionChanged;
-
-                DataGridViewCellStyle style = new DataGridViewCellStyle();
-                style.Alignment = DataGridViewContentAlignment.BottomRight;
-
-                DataGridViewTextBoxCell cell0 = new DataGridViewTextBoxCell();
-                cell0.Style = style;
-
-                DataGridViewColumn column0 = new DataGridViewColumn();
-                column0.CellTemplate = cell0;
-                column0.HeaderText = @"Сумма";
-                column0.ReadOnly = true;
-                column0.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-                _glassBox.Columns.Add(column0);
-
-                DataGridViewTextBoxCell cell = new DataGridViewTextBoxCell();
-                DataGridViewColumn column = new DataGridViewColumn();
-                column.CellTemplate = cell;
-                column.HeaderText = @"Объём";
-                column.ReadOnly = true;
-                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-                _glassBox.Columns.Add(column);
-
-                DataGridViewTextBoxCell cell2 = new DataGridViewTextBoxCell();
-                DataGridViewColumn column1 = new DataGridViewColumn();
-                column1.CellTemplate = cell2;
-                column1.HeaderText = @"Цена";
-                column1.ReadOnly = true;
-                column1.Width = 90;
-
-                _glassBox.Columns.Add(column1);
-
-
-                DataGridViewTextBoxCell cell3 = new DataGridViewTextBoxCell();
-                DataGridViewColumn column3 = new DataGridViewColumn();
-                column3.CellTemplate = cell3;
-                column3.HeaderText = @"Объём";
-                column3.ReadOnly = true;
-                column3.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-
-                _glassBox.Columns.Add(column3);
-
-                DataGridViewCellStyle styleRed = new DataGridViewCellStyle();
-                styleRed.Alignment = DataGridViewContentAlignment.MiddleRight;
-                styleRed.ForeColor = Color.Black;
-                styleRed.Font = new Font("Stencil", 4);
-
-
-                for (int i = 0; i < 25; i++)
-                {
-                    _glassBox.Rows.Add(null, null, null);
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.BackColor = Color.Gainsboro;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.ForeColor = Color.Black;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.Font = new Font("New Times Roman", 10);
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].Cells[0].Style = styleRed;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].Cells[1].Style = styleRed;
-                }
-
-                DataGridViewCellStyle styleBlue = new DataGridViewCellStyle();
-                styleBlue.Alignment = DataGridViewContentAlignment.MiddleRight;
-                styleBlue.ForeColor = Color.DarkOrange;
-                styleBlue.Font = new Font("Stencil", 4);
-
-                for (int i = 0; i < 25; i++)
-                {
-                    _glassBox.Rows.Add(null, null, null);
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.BackColor = Color.Black;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.ForeColor = Color.DarkOrange;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].DefaultCellStyle.Font = new Font("New Times Roman", 10);
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].Cells[0].Style = styleBlue;
-                    _glassBox.Rows[_glassBox.Rows.Count - 1].Cells[1].Style = styleBlue;
-                }
-
-                _glassBox.Rows[22].Cells[0].Selected = true;
-                _glassBox.Rows[22].Cells[0].Selected = false;
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// изменился текст в поле лимитной цены рядом со стаканом
-        /// </summary>
-        void _textBoxLimitPrice_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-        {
-            try
-            {
-                if (!_isPaint)
-                {
-                    return;
-                }
-
-                try
-                {
-                    if (Convert.ToDecimal(_textBoxLimitPrice.Text) < 0)
-                    {
-                        throw new Exception();
-                    }
-                }
-                catch (Exception)
-                {
-                    _textBoxLimitPrice.Text = _lastSelectPrice.ToString(new CultureInfo("RU-ru"));
-                }
-
-                _lastSelectPrice = Convert.ToDecimal(_textBoxLimitPrice.Text);
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// пользователь щёлкнул по стакану
-        /// </summary>
-        void _glassBox_SelectionChanged(object sender, EventArgs e)
-        {
-            try
-            {
-                if (_glassBox.InvokeRequired)
-                {
-                    _glassBox.Invoke(new Action<object, EventArgs>(_glassBox_SelectionChanged), sender, e);
-                    return;
-                }
-
-                decimal price;
-                try
-                {
-                    if (_glassBox.CurrentCell == null)
-                    {
-                        return;
-                    }
-                    price = Convert.ToDecimal(_glassBox.Rows[_glassBox.CurrentCell.RowIndex].Cells[2].Value);
-                }
-                catch (Exception)
-                {
-                    return;
-                }
-
-                if (price == 0)
-                {
-                    return;
-                }
-                if (_isPaint)
-                {
-                    _lastSelectPrice = price;
-                    _textBoxLimitPrice.Text = Convert.ToDouble(_lastSelectPrice).ToString(new CultureInfo("RU-ru"));
-                }
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// начать прорисовывать элементы коннектора
-        /// </summary>
-        public void StartPaint(WindowsFormsHost glass, System.Windows.Controls.TextBox textBoxLimitPrice)
-        {
-            try
-            {
-                if (_glassBox == null)
-                {
-                    return;
-                }
-                if (_glassBox.InvokeRequired)
-                {
-                    _glassBox.Invoke(new Action<WindowsFormsHost, System.Windows.Controls.TextBox>(StartPaint),glass,textBoxLimitPrice);
-                    return;
-                }
-
-                _textBoxLimitPrice = textBoxLimitPrice;
-                _textBoxLimitPrice.TextChanged += _textBoxLimitPrice_TextChanged;
-                _hostGlass = glass;
-
-                _isPaint = true;
-                PaintBidAsk(_bestBid, _bestAsk);
-                _hostGlass.Child = _glassBox;
-                _hostGlass.Child.Refresh();
-
-                _textBoxLimitPrice.Text = Convert.ToDouble(_lastSelectPrice).ToString(new CultureInfo("RU-ru"));
-
-                PaintMarketDepth(_depth);
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// остановить прорисовывание элементов коннектора
-        /// </summary>
-        public void StopPaint()
-        {
-            try
-            {
-                if (_glassBox != null && _glassBox.InvokeRequired)
-                {
-                    _glassBox.Invoke(new Action(StopPaint));
-                    return;
-                }
-
-                if (_textBoxLimitPrice != null)
-                {
-                    _textBoxLimitPrice.TextChanged -= _textBoxLimitPrice_TextChanged;
-                    _textBoxLimitPrice = null;
-                }
-
-                if (_hostGlass != null)
-                {
-                    _hostGlass.Child = null;
-                    _hostGlass = null;
-                }
-
-                _isPaint = false;
-
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// включена ли прорисовка
-        /// </summary>
-        private bool _isPaint;
-
-        /// <summary>
-        /// прорисовать Бид с Аском
-        /// </summary>
-        private void PaintBidAsk(decimal bid, decimal ask)
-        {
-            try
-            {
-                if (_isPaint == false)
-                {
-                    return;
-                }
-                if (_glassBox.InvokeRequired)
-                {
-                    _glassBox.Invoke(new Action<decimal, decimal>(PaintBidAsk), bid, ask);
-                    return;
-                }
-
-                if (ask != 0 && bid != 0)
-                {
-                    _glassBox.Rows[25].Cells[2].Value = ask;
-                    _glassBox.Rows[24].Cells[2].Value = bid;
-                }
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
-
-        /// <summary>
-        /// стакан
-        /// </summary>
-        private MarketDepth _depth;
-
-        /// <summary>
-        /// время последнего обновления стакана
-        /// </summary>
-        private DateTime _lastGlassUpdete = DateTime.MinValue;
-
-        /// <summary>
-        /// прорисовать стакан
-        /// </summary>
-        private void PaintMarketDepth(MarketDepth depth)
-        {
-            try
-            {
-                _depth = depth;
-
-                if (_isPaint == false || depth == null)
-                {
-                    return;
-                }
-
-                if (_glassBox.InvokeRequired)
-                {
-                    _glassBox.Invoke(new Action<MarketDepth>(PaintMarketDepth), depth);
-                    return;
-                }
-                if (_lastGlassUpdete != DateTime.MinValue &&
-                    _lastGlassUpdete.AddMilliseconds(300) > DateTime.Now)
-                {
-                    return;
-                }
-
-                _lastGlassUpdete = DateTime.Now;
-
-                if (depth.Asks[0].Ask == 0 ||
-                    depth.Bids[0].Bid == 0)
-                {
-                    return;
-                }
-
-                decimal maxVol = 0;
-
-                decimal allBid = 0;
-
-                decimal allAsk = 0;
-
-                for (int i = 0; depth.Asks != null && i < 25; i++)
-                {
-                    if (i < depth.Asks.Count)
-                    {
-                        _glassBox.Rows[25 + i].Cells[2].Value = depth.Asks[i].Price;
-                        _glassBox.Rows[25 + i].Cells[3].Value = depth.Asks[i].Ask;
-                        if (depth.Asks[i].Ask > maxVol)
-                        {
-                            maxVol = depth.Asks[i].Ask;
-                        }
-                        allAsk += depth.Asks[i].Ask;
-                    }
-                    else if (_glassBox.Rows[25 + i].Cells[2].Value != null)
-                    {
-                        _glassBox.Rows[25 + i].Cells[0].Value = null;
-                        _glassBox.Rows[25 + i].Cells[1].Value = null;
-                        _glassBox.Rows[25 + i].Cells[2].Value = null;
-                        _glassBox.Rows[25 + i].Cells[3].Value = null;
-                    }
-                }
-
-
-                for (int i = 0; depth.Bids != null && i < 25; i++)
-                {
-                    if (i < depth.Bids.Count)
-                    {
-                        _glassBox.Rows[24 - i].Cells[2].Value = depth.Bids[i].Price;
-                        _glassBox.Rows[24 - i].Cells[3].Value = depth.Bids[i].Bid;
-
-                        if (depth.Bids[i].Bid > maxVol)
-                        {
-                            maxVol = depth.Bids[i].Bid;
-                        }
-
-                        allBid += depth.Bids[i].Bid;
-                    }
-                    else if (_glassBox.Rows[24 - i].Cells[2].Value != null)
-                    {
-                        _glassBox.Rows[24 - i].Cells[2].Value = null;
-                        _glassBox.Rows[24 - i].Cells[3].Value = null;
-                        _glassBox.Rows[24 - i].Cells[0].Value = null;
-                        _glassBox.Rows[24 - i].Cells[1].Value = null;
-                    }
-
-                }
-
-                // объём в палках для аска
-                for (int i = 0; depth.Asks != null && i < 25 && i < depth.Asks.Count; i++)
-                {
-                    int percentFromMax = Convert.ToInt32(depth.Asks[i].Ask / maxVol * 50);
-
-                    if (percentFromMax == 0)
-                    {
-                        percentFromMax = 1;
-                    }
-
-                    StringBuilder builder = new StringBuilder(percentFromMax);
-                    for (int i2 = 0; i2 < percentFromMax; i2++)
-                    {
-                        builder.Append('|');
-                    }
-
-                    _glassBox.Rows[25 + i].Cells[1].Value = builder;
-
-                }
-
-                // объём в палках для бида
-                for (int i = 0; depth.Bids != null && i < 25 && i < depth.Bids.Count; i++)
-                {
-                    int percentFromMax = Convert.ToInt32(depth.Bids[i].Bid / maxVol * 50);
-
-                    if (percentFromMax == 0)
-                    {
-                        percentFromMax = 1;
-                    }
-
-                    StringBuilder builder = new StringBuilder(percentFromMax);
-
-                    for (int i2 = 0; i2 < percentFromMax; i2++)
-                    {
-                        builder.Append('|');
-                    }
-
-                    _glassBox.Rows[24 - i].Cells[1].Value = builder;
-                }
-
-                decimal maxSeries;
-
-                if (allAsk > allBid)
-                {
-                    maxSeries = allAsk;
-                }
-                else
-                {
-                    maxSeries = allBid;
-                }
-
-                // объём комулятивный для аска
-                decimal summ = 0;
-                for (int i = 0; depth.Asks != null && i < 25 && i < depth.Asks.Count; i++)
-                {
-                    summ += depth.Asks[i].Ask;
-
-                    int percentFromMax = Convert.ToInt32(summ / maxSeries * 50);
-
-                    if (percentFromMax == 0)
-                    {
-                        percentFromMax = 1;
-                    }
-
-                    StringBuilder builder = new StringBuilder(percentFromMax);
-                    for (int i2 = 0; i2 < percentFromMax; i2++)
-                    {
-                        builder.Append('|');
-                    }
-
-                    _glassBox.Rows[25 + i].Cells[0].Value = builder;
-
-                }
-
-                // объём комулятивный для бида
-                summ = 0;
-                for (int i = 0; depth.Bids != null && i < 25 && i < depth.Bids.Count; i++)
-                {
-                    summ += depth.Bids[i].Bid;
-
-                    int percentFromMax = Convert.ToInt32(summ / maxSeries * 50);
-
-                    if (percentFromMax == 0)
-                    {
-                        percentFromMax = 1;
-                    }
-
-                    StringBuilder builder = new StringBuilder(percentFromMax);
-                    for (int i2 = 0; i2 < percentFromMax; i2++)
-                    {
-                        builder.Append('|');
-                    }
-
-                    _glassBox.Rows[24 - i].Cells[0].Value = builder;
-
-                }
-                // _glassBox.Refresh();
-            }
-            catch (Exception error)
-            {
-                SendNewLogMessage(error.ToString(), LogMessageType.Error);
-            }
-        }
+        public event Action<string, TimeFrame, TimeSpan, string, ServerType> ConnectorStartedReconnectEvent;
 
 // сообщения в лог 
 

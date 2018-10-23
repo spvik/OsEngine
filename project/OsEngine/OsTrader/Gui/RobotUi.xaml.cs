@@ -5,6 +5,7 @@
 using System;
 using System.Windows;
 using OsEngine.Charts.CandleChart;
+using OsEngine.Entity;
 using OsEngine.Market.Servers;
 
 namespace OsEngine.OsTrader.Gui
@@ -18,11 +19,11 @@ namespace OsEngine.OsTrader.Gui
         public RobotUi()
         {
             InitializeComponent();
-            _strategyKeeper = new OsTraderMaster( ChartHostPanel, HostGlass, HostOpenPosition, HostClosePosition, HostAllPosition,
-                                         HostBotLog, HostBotLogPrime, RectChart, HostAllert, TabControlBotsName,TabControlBotTab,TextBoxPrice);
-            Closing += RobotUi_Closing;
-            ServerMaster.IsTester = false;
             ServerMaster.SetHostTable(HostPositionOnBoard, HostOrdersOnBoard);
+            _strategyKeeper = new OsTraderMaster( ChartHostPanel, HostGlass, HostOpenPosition, HostClosePosition, HostAllPosition,
+                                         HostBotLog, HostBotLogPrime, RectChart, HostAllert, TabControlBotsName,TabControlBotTab,TextBoxPrice,GridChartControlPanel);
+            Closing += RobotUi_Closing;
+           
 
             LocationChanged += RobotUi_LocationChanged;
 
@@ -69,6 +70,15 @@ namespace OsEngine.OsTrader.Gui
 
         void RobotUi_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            AcceptDialogUi ui = new AcceptDialogUi("Вы собираетесь закрыть программу. Вы уверены?");
+            ui.ShowDialog();
+
+            if (ui.UserAcceptActioin == false)
+            {
+                e.Cancel = true;
+                return;
+            }
+
             ServerMaster.AbortAll();
         }
 
@@ -101,10 +111,10 @@ namespace OsEngine.OsTrader.Gui
 
         private void buttonBuyFast_Click_1(object sender, RoutedEventArgs e)
         {
-            int volume; 
+            decimal volume; 
             try
             {
-                volume = Convert.ToInt32(TextBoxVolumeFast.Text);
+                volume = Convert.ToDecimal(TextBoxVolumeFast.Text.Replace(".", ","));
             }
             catch (Exception)
             {
@@ -116,10 +126,10 @@ namespace OsEngine.OsTrader.Gui
 
         private void buttonSellFast_Click(object sender, RoutedEventArgs e)
         {
-            int volume;
+            decimal volume;
             try
             {
-                volume = Convert.ToInt32(TextBoxVolumeFast.Text);
+                volume = Convert.ToDecimal(TextBoxVolumeFast.Text.Replace(".", ","));
             }
             catch (Exception)
             {
@@ -139,10 +149,10 @@ namespace OsEngine.OsTrader.Gui
 
         private void ButtonBuyLimit_Click(object sender, RoutedEventArgs e)
         {
-            int volume;
+            decimal volume;
             try
             {
-                volume = Convert.ToInt32(TextBoxVolumeFast.Text);
+                volume = Decimal.Parse(TextBoxVolumeFast.Text.Replace(".",","));
             }
             catch (Exception)
             {
@@ -173,10 +183,10 @@ namespace OsEngine.OsTrader.Gui
 
         private void ButtonSellLimit_Click(object sender, RoutedEventArgs e)
         {
-            int volume;
+            decimal volume;
             try
             {
-                volume = Convert.ToInt32(TextBoxVolumeFast.Text);
+                volume = Convert.ToDecimal(TextBoxVolumeFast.Text.Replace(".", ","));
             }
             catch (Exception)
             {
@@ -230,6 +240,9 @@ namespace OsEngine.OsTrader.Gui
             _strategyKeeper.BotShowRiskManager();
         }
 
-
+        private void ButtonStrategParametr_Click(object sender, RoutedEventArgs e)
+        {
+            _strategyKeeper.BotShowParametrsDialog();
+        }
     }
 }

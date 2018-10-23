@@ -34,13 +34,12 @@ namespace OsEngine.Market.Servers
                 Directory.CreateDirectory(@"Data");
             }
 
+            _pathName = @"Data" + @"\" + server.GetType().Name + @"Trades";
+
             Thread saver = new Thread(TickSaverSpaceInOneFile);
             saver.CurrentCulture = new CultureInfo("RU-ru");
             saver.IsBackground = false;
             saver.Start();
-
-            _pathName = @"Data" + @"\" + server.GetType().Name + @"Trades";
-
         }
 
         private IServer _server;
@@ -143,7 +142,7 @@ namespace OsEngine.Market.Servers
 
                         if (_securities == null ||
                             (_securities != null &&
-                            _securities.Find(security => security.Name == allTrades[i1][0].SecurityNameCode) == null))
+                             _securities.Find(security => security.Name == allTrades[i1][0].SecurityNameCode) == null))
                         {
                             continue;
                         }
@@ -156,39 +155,36 @@ namespace OsEngine.Market.Servers
                             tradeInfo = new TradeSaveInfo();
                             tradeInfo.NameSecurity = allTrades[i1][0].SecurityNameCode;
                             _tradeSaveInfo.Add(tradeInfo);
-
-                            StreamWriter writer =
-                                new StreamWriter(_pathName + @"\" + allTrades[i1][0].SecurityNameCode + ".txt", false);
-
-                            StringBuilder saveStr = new StringBuilder();
-
-                            for (int i = 0; i < allTrades[i1].Count - 1; i++)
-                            {
-                                saveStr.Append(allTrades[i1][i].GetSaveString() + "\r\n");
-                            }
-                            tradeInfo.LastSaveIndex = allTrades[i1].Count - 1;
-                            writer.Write(saveStr);
-                            writer.Close();
                         }
-                        else
+
+                        if (tradeInfo.LastSaveIndex == allTrades[i1].Count)
                         {
-                            if (tradeInfo.LastSaveIndex == allTrades[i1].Count)
-                            {
-                                continue;
-                            }
-                            StreamWriter writer =
-                                new StreamWriter(_pathName + @"\" + allTrades[i1][0].SecurityNameCode + ".txt", true);
-
-                            StringBuilder saveStr = new StringBuilder();
-
-                            for (int i = tradeInfo.LastSaveIndex; i < allTrades[i1].Count - 1; i++)
-                            {
-                                saveStr.Append(allTrades[i1][i].GetSaveString() + "\r\n");
-                            }
-                            tradeInfo.LastSaveIndex = allTrades[i1].Count - 1;
-                            writer.Write(saveStr);
-                            writer.Close();
+                            continue;
                         }
+
+                        int lastSecond = allTrades[i1][tradeInfo.LastSaveIndex].Time.Second;
+                        int lastMillisecond = allTrades[i1][tradeInfo.LastSaveIndex].MicroSeconds;
+
+                        StreamWriter writer =
+                            new StreamWriter(_pathName + @"\" + allTrades[i1][0].SecurityNameCode + ".txt", true);
+                        for (int i = tradeInfo.LastSaveIndex; i < allTrades[i1].Count - 1; i++)
+                        {
+                            if (allTrades[i1][i].MicroSeconds == 0)
+                            { // генерим какое-то время микросекунд, если нам коннектор их не выдал
+                                if (lastSecond != allTrades[i1][i].Time.Second)
+                                {
+                                    lastMillisecond = 0;
+                                    lastSecond = allTrades[i1][i].Time.Second;
+                                }
+
+                                allTrades[i1][i].MicroSeconds = lastMillisecond += 10;
+                            }
+
+                            writer.WriteLine(allTrades[i1][i].GetSaveString());
+                        }
+                        tradeInfo.LastSaveIndex = allTrades[i1].Count - 1;
+                        writer.Close();
+
                     }
                 }
             }
@@ -280,6 +276,14 @@ namespace OsEngine.Market.Servers
                     if (newList.Count == 0)
                     {
                         continue;
+                    }
+
+                    if (_tradeSaveInfo.Find(s => s.NameSecurity == newList[0].SecurityNameCode) == null)
+                    {
+                        TradeSaveInfo tradeInfo = new TradeSaveInfo();
+                        tradeInfo.NameSecurity = newList[0].SecurityNameCode;
+                        tradeInfo.LastSaveIndex = newList.Count;
+                        _tradeSaveInfo.Add(tradeInfo);
                     }
 
                     if (allTrades == null)

@@ -75,11 +75,13 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
         /// <summary>
         /// конструктор без параметров. Индикатор не будет сохраняться
+        /// используется ТОЛЬКО для создания составных индикаторов
+        /// не используйте его из слоя создания роботов!
         /// </summary>
         /// <param name="canDelete">можно ли пользователю удалить индикатор с графика вручную</param>
         public StandardDeviation(bool canDelete)
         {
-            Name = "";
+            Name = Guid.NewGuid().ToString();
             TypeIndicator = IndicatorOneCandleChartType.Line;
             TypePointsToSearch = StandardDeviationTypePoints.Close;
             ColorBase = Color.DeepSkyBlue;
@@ -257,12 +259,25 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
             if (ui.IsChange && _myCandles != null)
             {
-                ProcessAll(_myCandles);
+                Reload();
+            }
+        }
 
-                if (NeadToReloadEvent != null)
-                {
-                    NeadToReloadEvent(this);
-                }
+        /// <summary>
+        /// перезагрузить индикатор
+        /// </summary>
+        public void Reload()
+        {
+            if (_myCandles == null)
+            {
+                return;
+            }
+            ProcessAll(_myCandles);
+
+
+            if (NeadToReloadEvent != null)
+            {
+                NeadToReloadEvent(this);
             }
         }
 

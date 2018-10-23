@@ -15,7 +15,7 @@ namespace OsEngine.Entity
         /// <summary>
         /// объём
         /// </summary>
-        public int Volume;
+        public decimal Volume;
 
         /// <summary>
         /// цена
@@ -71,8 +71,8 @@ namespace OsEngine.Entity
         {
             string[] arraySave = saveString.Split('&');
 
-            Volume = Convert.ToInt32(arraySave[0]);
-            Price = Convert.ToDecimal(arraySave[1]);
+            Volume = Convert.ToDecimal(arraySave[0].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            Price = Convert.ToDecimal(arraySave[1].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
             NumberOrderParent = arraySave[2];
             Time = Convert.ToDateTime(arraySave[3]);
             NumberTrade = arraySave[4];

@@ -19,11 +19,70 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
     /// </summary>
     public class BotManualControl
     {
+        // статическая часть с работой потока проверяющего не нужно ли чего отзывать
 
-// сервис
+        /// <summary>
+        /// поток отзывающий ордера
+        /// </summary>
+        public static Thread Watcher;
+
+        /// <summary>
+        /// вкладки которые нужно проверять
+        /// </summary>
+        public static List<BotManualControl> TabsToCheck = new List<BotManualControl>();
+
+        private static object _activatorLocker = new object();
+
+        /// <summary>
+        /// активировать поток для просмотра сделок
+        /// </summary>
+        public static void Activate()
+        {
+            lock (_activatorLocker)
+            {
+                if (Watcher != null)
+                {
+                    return;
+                }
+                Watcher = new Thread(WatcherHome);
+                Watcher.Name = "BotManualControlThread";
+                Watcher.IsBackground = true;
+                Watcher.Start();
+            }
+
+        }
+
+        /// <summary>
+        /// место работы потока который следит за исполнением сделок
+        /// </summary>
+        public static void WatcherHome()
+        {
+            if (ServerMaster.StartProgram != ServerStartProgramm.IsOsTrader)
+            {
+                return;
+            }
+
+            while (true)
+            {
+                Thread.Sleep(2000);
+
+                for (int i = 0; i < TabsToCheck.Count; i++)
+                {
+                    TabsToCheck[i].CheckPositions();
+                }
+
+                if (!MainWindow.ProccesIsWorked)
+                {
+                    return;
+                }
+            }
+        }
+
+        // объект 
+
         private string _name;
 
-        public BotManualControl(string name,BotTabSimple botTab)
+        public BotManualControl(string name, BotTabSimple botTab)
         {
             _name = name;
 
@@ -42,7 +101,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
             SecondToOpen = new TimeSpan(0, 0, 0, 50);
 
             SecondToCloseIsOn = true;
-            SecondToClose = new TimeSpan(0,0,0,50);
+            SecondToClose = new TimeSpan(0, 0, 0, 50);
 
             SetbackToOpenIsOn = false;
 
@@ -52,8 +111,6 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
 
             SetbackToClosePosition = 10;
 
-            
-
             // грузим настройки из файла
 
             if (Load() == false)
@@ -62,13 +119,14 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
             }
 
             _botTab = botTab;
-            _timeStart = DateTime.Now;
 
-            if (!ServerMaster.IsTester)
+            if (ServerMaster.StartProgram != ServerStartProgramm.IsTester)
             {
-                Thread watcher = new Thread(WatcherHome);
-                watcher.IsBackground = true;
-                watcher.Start();
+                if (Watcher == null)
+                {
+                    Activate();
+                }
+                TabsToCheck.Add(this);
             }
         }
 
@@ -121,7 +179,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// <summary>
         /// сохранить
         /// </summary>
-        public void Save() 
+        public void Save()
         {
             try
             {
@@ -160,7 +218,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// <summary>
         /// удалить
         /// </summary>
-        public void Delete() 
+        public void Delete()
         {
             try
             {
@@ -171,7 +229,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
             }
             catch (Exception)
             {
-               // ignore
+                // ignore
             }
         }
 
@@ -184,7 +242,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
             ui.ShowDialog();
         }
 
-// стоп
+        // стоп
         /// <summary>
         /// включен ли стоп
         /// </summary>
@@ -200,7 +258,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public int StopSlipage;
 
-// профит
+        // профит
 
         /// <summary>
         /// вклюичен ли профит
@@ -217,7 +275,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public int ProfitSlipage;
 
-// время на вход / выход
+        // время на вход / выход
 
         /// <summary>
         /// включен ли отзыв заявки на открытие по времени
@@ -239,7 +297,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public TimeSpan SecondToClose;
 
-// реакция на отмену заявки на закрытие
+        // реакция на отмену заявки на закрытие
 
         /// <summary>
         /// включено ли повторное выставление заявки на закрытие, если первая была отозвана 
@@ -256,7 +314,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public int DoubleExitSlipage;
 
-// отход от цены для отмены заявки 
+        // отход от цены для отмены заявки 
 
         /// <summary>
         /// включен ли отзыв ордеров на открытие по откату цены
@@ -278,145 +336,134 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public int SetbackToClosePosition;
 
-// отзыв ордеров
-
-        /// <summary>
-        /// время создания объекта
-        /// </summary>
-        private DateTime _timeStart;
+        // отзыв ордеров
 
         /// <summary>
         /// журнал
         /// </summary>
         private BotTabSimple _botTab;
 
+        public DateTime ServerTime = DateTime.MinValue;
+
         /// <summary>
         /// метод, в котором работает поток следящий за исполнением заявок
         /// </summary>
-        private void WatcherHome()
+        private void CheckPositions()
         {
-            while (true)
-            {
-                Thread.Sleep(3000);
 
-                if (MainWindow.ProccesIsWorked == false)
+            if (MainWindow.ProccesIsWorked == false)
+            {
+                return;
+            }
+
+            if (ServerTime == DateTime.MinValue)
+            {
+                return;
+            }
+
+            try
+            {
+                List<Position> openDeals = _botTab.PositionsOpenAll;
+
+                if (openDeals == null)
                 {
                     return;
                 }
 
-                try
+                for (int i = 0; i < openDeals.Count; i++)
                 {
-                    List<Position> openDeals = _botTab.PositionsOpenAll;
+                    Position position = openDeals[i];
 
-                    if (openDeals == null)
+                    for (int i2 = 0; position.OpenOrders != null && i2 < position.OpenOrders.Count; i2++)
                     {
-                        continue;
-                    }
+                        // ОТКРЫВАЮЩИЕ ОРДЕРА
+                        Order openOrder = position.OpenOrders[i2];
 
-                    for (int i = 0; i < openDeals.Count; i++)
-                    {
-                        Position position = openDeals[i];
-
-                        for (int i2 = 0; position.OpenOrders != null && i2 < position.OpenOrders.Count; i2++)
+                        if (openOrder.State != OrderStateType.Activ &&
+                            openOrder.State != OrderStateType.Patrial)
                         {
-                            // ОТКРЫВАЮЩИЕ ОРДЕРА
-                            Order openOrder = position.OpenOrders[i2];
+                            continue;
+                        }
 
-                            if (openOrder.State != OrderStateType.Activ &&
-                                openOrder.State != OrderStateType.Patrial)
-                            {
-                                continue;
-                            }
-                            if (_timeStart.AddSeconds(10) > DateTime.Now)
-                            {
-                                openOrder.State = OrderStateType.Done;
-                                continue;
-                            }
+                        if (SecondToOpenIsOn &&
+                            openOrder.TimeCreate.Add(openOrder.LifeTime) < ServerTime)
+                        {
+                            SendOrderToClose(openOrder, openDeals[i]);
+                        }
 
-                            if (SecondToOpenIsOn &&
-                                openOrder.TimeCreate.Add(openOrder.LifeTime) < DateTime.Now)
+                        if (SetbackToOpenIsOn &&
+                            openOrder.Side == Side.Buy)
+                        {
+                            decimal maxSpread = _botTab.Securiti.PriceStep * SetbackToOpenPosition;
+
+                            if (Math.Abs(_botTab.PriceBestBid - openOrder.Price) > maxSpread)
                             {
                                 SendOrderToClose(openOrder, openDeals[i]);
                             }
-
-                            if (SetbackToOpenIsOn &&
-                                openOrder.Side == Side.Buy)
-                            {
-                                decimal maxSpread = _botTab.Securiti.PriceStep * SetbackToOpenPosition;
-
-                                if (Math.Abs(_botTab.PriceBestAsk - openOrder.Price) > maxSpread)
-                                {
-                                    SendOrderToClose(openOrder, openDeals[i]);
-                                }
-                            }
-
-                            if (SetbackToOpenIsOn &&
-                                openOrder.Side == Side.Sell)
-                            {
-                                decimal maxSpread = _botTab.Securiti.PriceStep * SetbackToOpenPosition;
-
-                                if (Math.Abs(_botTab.PriceBestBid - openOrder.Price) > maxSpread)
-                                {
-                                    SendOrderToClose(openOrder, openDeals[i]);
-                                }
-                            }
                         }
 
-
-                        for (int i2 = 0; position.CloseOrders != null && i2 < position.CloseOrders.Count; i2++)
+                        if (SetbackToOpenIsOn &&
+                            openOrder.Side == Side.Sell)
                         {
-                            // ЗАКРЫВАЮЩИЕ ОРДЕРА
-                            Order closeOrder = position.CloseOrders[i2];
+                            decimal maxSpread = _botTab.Securiti.PriceStep * SetbackToOpenPosition;
 
-                            if ((closeOrder.State != OrderStateType.Activ &&
-                                 closeOrder.State != OrderStateType.Patrial))
+                            if (Math.Abs(_botTab.PriceBestAsk - openOrder.Price) > maxSpread)
                             {
-                                continue;
+                                SendOrderToClose(openOrder, openDeals[i]);
                             }
-                            if (_timeStart.AddSeconds(10) > DateTime.Now)
-                            {
-                                closeOrder.State = OrderStateType.Done;
-                                continue;
-                            }
+                        }
+                    }
 
-                            if (SecondToCloseIsOn &&
-                                closeOrder.TimeCreate.Add(closeOrder.LifeTime) < DateTime.Now)
+
+                    for (int i2 = 0; position.CloseOrders != null && i2 < position.CloseOrders.Count; i2++)
+                    {
+                        // ЗАКРЫВАЮЩИЕ ОРДЕРА
+                        Order closeOrder = position.CloseOrders[i2];
+
+                        if ((closeOrder.State != OrderStateType.Activ &&
+                             closeOrder.State != OrderStateType.Patrial))
+                        {
+                            continue;
+                        }
+
+                        if (SecondToCloseIsOn &&
+                            closeOrder.TimeCreate.Add(closeOrder.LifeTime) < ServerTime)
+                        {
+                            SendOrderToClose(closeOrder, openDeals[i]);
+                        }
+
+                        if (SetbackToCloseIsOn &&
+                            closeOrder.Side == Side.Buy)
+                        {
+                            decimal priceRedLine = closeOrder.Price -
+                                                   _botTab.Securiti.PriceStep * SetbackToClosePosition;
+
+                            if (_botTab.PriceBestBid <= priceRedLine)
                             {
                                 SendOrderToClose(closeOrder, openDeals[i]);
                             }
+                        }
 
-                            if (SetbackToCloseIsOn &&
-                                closeOrder.Side == Side.Buy)
+                        if (SetbackToCloseIsOn &&
+                            closeOrder.Side == Side.Sell)
+                        {
+                            decimal priceRedLine = closeOrder.Price +
+                                                   _botTab.Securiti.PriceStep * SetbackToClosePosition;
+
+                            if (_botTab.PriceBestAsk >= priceRedLine)
                             {
-                                decimal priceRedLine = closeOrder.Price -
-                                                       _botTab.Securiti.PriceStep * SetbackToClosePosition;
-
-                                if (_botTab.PriceBestAsk <= priceRedLine)
-                                {
-                                    SendOrderToClose(closeOrder, openDeals[i]);
-                                }
-                            }
-
-                            if (SetbackToCloseIsOn &&
-                                closeOrder.Side == Side.Sell)
-                            {
-                                decimal priceRedLine = closeOrder.Price +
-                                                       _botTab.Securiti.PriceStep * SetbackToClosePosition;
-
-                                if (_botTab.PriceBestBid >= priceRedLine)
-                                {
-                                    SendOrderToClose(closeOrder, openDeals[i]);
-                                }
+                                SendOrderToClose(closeOrder, openDeals[i]);
                             }
                         }
                     }
                 }
-                catch
-                    (Exception error)
-                {
-                    SendNewLogMessage(error.ToString(), LogMessageType.Error);
-                }
             }
+            catch
+                (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+
         }
 
         /// <summary>
@@ -495,7 +542,7 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// </summary>
         public event Action<Order, Position> DontOpenOrderDetectedEvent;
 
-// сообщения в лог 
+        // сообщения в лог 
 
         /// <summary>
         /// выслать новое сообщение на верх
@@ -512,6 +559,5 @@ namespace OsEngine.OsTrader.Panels.Tab.Internal
         /// исходящее сообщение для лога
         /// </summary>
         public event Action<string, LogMessageType> LogMessageEvent;
-
     }
 }

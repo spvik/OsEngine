@@ -111,11 +111,13 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
         /// <summary>
         /// конструктор без параметров. Индикатор не будет сохраняться
+        /// используется ТОЛЬКО для создания составных индикаторов
+        /// не используйте его из слоя создания роботов!
         /// </summary>
         /// <param name="canDelete">можно ли пользователю удалить индикатор с графика вручную</param>
         public MovingAverage(bool canDelete)
         {
-            Name = "";
+            Name = Guid.NewGuid().ToString();
             KaufmanFastEma = 2;
             KaufmanSlowEma = 30;
             TypeCalculationAverage = MovingAverageTypeCalculation.Simple;
@@ -302,20 +304,27 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
             if (ui.IsChange)
             {
+                Reload();
+            }
+        }
 
-                if (_myValues != null)
-                {
-                    ProcessAll(_myValues);
-                }
-                if (_myCandles != null)
-                {
-                    ProcessAll(_myCandles);
-                }
-               
-                if (NeadToReloadEvent != null)
-                {
-                    NeadToReloadEvent(this);
-                }
+        /// <summary>
+        /// перезагрузить индикатор
+        /// </summary>
+        public void Reload()
+        {
+            if (_myValues != null)
+            {
+                ProcessAll(_myValues);
+            }
+            if (_myCandles != null)
+            {
+                ProcessAll(_myCandles);
+            }
+
+            if (NeadToReloadEvent != null)
+            {
+                NeadToReloadEvent(this);
             }
         }
 
@@ -673,7 +682,7 @@ namespace OsEngine.Charts.CandleChart.Indicators
             }
             decimal average = 0;
 
-            int weights = 0;
+            decimal weights = 0;
 
             for (int i = index; i > index - Lenght; i--)
             {

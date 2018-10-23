@@ -25,16 +25,11 @@ namespace OsEngine.OsTrader.Panels.Tab
     public class BotTabIndex : IIBotTab
     {
 
-        /// <summary>
-        /// Массив для хранения списка интсрументов
-        /// </summary>
-        public List<Connector> Tabs;
-
         public BotTabIndex(string name)
         {
             TabName = name;
             Tabs = new List<Connector>();
-            _valuesToFormula = new List<ValueForm>();
+            _valuesToFormula = new List<ValueSave>();
             _chartMaster = new ChartMaster(TabName);
 
             Load();
@@ -45,6 +40,11 @@ namespace OsEngine.OsTrader.Panels.Tab
         /// </summary>
         private ChartMaster _chartMaster;
 
+        /// <summary>
+        /// Массив для хранения списка интсрументов
+        /// </summary>
+        public List<Connector> Tabs;
+
  // управление
 
         /// <summary>
@@ -54,6 +54,16 @@ namespace OsEngine.OsTrader.Panels.Tab
         {
             BotTabCandleSpreadUi ui = new BotTabCandleSpreadUi(this);
             ui.ShowDialog();
+
+            if (Tabs.Count != 0)
+            {
+                _chartMaster.SetNewSecurity("Index on: " + _userFormula, Tabs[0].TimeFrame, Tabs[0].TimeFrameTimeSpan, null, Tabs[0].ServerType);
+            }
+            else
+            {
+                _chartMaster.Clear();
+                
+            }
         }
 
         /// <summary>
@@ -68,15 +78,21 @@ namespace OsEngine.OsTrader.Panels.Tab
         /// <summary>
         /// Добавить новую бумагу в список
         /// </summary>
-        public void CreateNewSecurity()
+        public void ShowNewSecurityDialog()
+        {
+            CreateNewSecurityConnector();
+            Tabs[Tabs.Count - 1].ShowDialog();
+            Save();
+        }
+
+        /// <summary>
+        /// сделать новый адаптер для подключения данных
+        /// </summary>
+        public void CreateNewSecurityConnector()
         {
             Connector connector = new Connector(TabName + Tabs.Count);
             Tabs.Add(connector);
             Tabs[Tabs.Count - 1].NewCandlesChangeEvent += BotTabIndex_NewCandlesChangeEvent;
-            Tabs[Tabs.Count - 1].LastCandlesChangeEvent += BotTabIndex_NewCandlesChangeEvent;
-            connector.ShowDialog();
-            Save();
-
         }
 
         /// <summary>
@@ -89,7 +105,6 @@ namespace OsEngine.OsTrader.Panels.Tab
                 return;
             }
             Tabs[index].NewCandlesChangeEvent -= BotTabIndex_NewCandlesChangeEvent;
-            Tabs[index].LastCandlesChangeEvent -= BotTabIndex_NewCandlesChangeEvent;
             Tabs[index].Delete();
             Tabs.RemoveAt(index);
 
@@ -127,6 +142,7 @@ namespace OsEngine.OsTrader.Panels.Tab
         /// </summary>
         public void Clear()
         {
+            _valuesToFormula = new List<ValueSave>();
             _chartMaster.Clear();
         }
 
@@ -175,7 +191,6 @@ namespace OsEngine.OsTrader.Panels.Tab
                     {
                         Tabs.Add(new Connector(save2[i]));
                         Tabs[Tabs.Count - 1].NewCandlesChangeEvent += BotTabIndex_NewCandlesChangeEvent;
-                        Tabs[Tabs.Count - 1].LastCandlesChangeEvent += BotTabIndex_NewCandlesChangeEvent;
                     }
                     UserFormula = reader.ReadLine();
 
@@ -198,6 +213,28 @@ namespace OsEngine.OsTrader.Panels.Tab
             if (File.Exists(@"Engine\" + TabName + @"SpreadSet.txt"))
             {
                 File.Delete(@"Engine\" + TabName + @"SpreadSet.txt");
+            }
+        }
+
+        /// <summary>
+        /// подключена ли вкладка на скачивание данных
+        /// </summary>
+        public bool IsConnected
+        {
+            get
+            {
+                if (Tabs == null)
+                {
+                    return false;
+                }
+                for (int i = 0; i < Tabs.Count; i++)
+                {
+                    if (Tabs[i].IsConnected == false)
+                    {
+                        return false;
+                    }
+                }
+                return true;
             }
         }
 
@@ -236,11 +273,16 @@ namespace OsEngine.OsTrader.Panels.Tab
 
             if (_valuesToFormula != null && !string.IsNullOrWhiteSpace(nameArray))
             {
-                ValueForm val = _valuesToFormula.Find(v => v.Name == nameArray);
+                ValueSave val = _valuesToFormula.Find(v => v.Name == nameArray);
 
                 if (val != null)
                 {
                     Candles = val.ValueCandles;
+
+                    if (Candles[Candles.Count - 1].TimeStart == Candles[Candles.Count - 2].TimeStart)
+                    {
+                        Candles.RemoveAt(Candles.Count - 1);
+                    }
 
                     _chartMaster.SetCandles(Candles);
 
@@ -279,7 +321,7 @@ namespace OsEngine.OsTrader.Panels.Tab
                 _userFormula = value;
                 Save();
 
-                _valuesToFormula = new List<ValueForm>();
+                _valuesToFormula = new List<ValueSave>();
                 Candles = new List<Candle>();
                 _chartMaster.Clear();
 
@@ -289,7 +331,7 @@ namespace OsEngine.OsTrader.Panels.Tab
 
                 if (_valuesToFormula != null && !string.IsNullOrWhiteSpace(nameArray))
                 {
-                    ValueForm val = _valuesToFormula.Find(v => v.Name == nameArray);
+                    ValueSave val = _valuesToFormula.Find(v => v.Name == nameArray);
 
                     if (val != null)
                     {
@@ -315,7 +357,7 @@ namespace OsEngine.OsTrader.Panels.Tab
         /// <summary>
         /// массив объектов для хранения промежуточных массивов свечей
         /// </summary>
-        private List<ValueForm> _valuesToFormula;
+        private List<ValueSave> _valuesToFormula;
 
         /// <summary>
         /// проверить формулу на ошибки и привести к виду программы
@@ -574,7 +616,7 @@ namespace OsEngine.OsTrader.Panels.Tab
             }
             catch (Exception error)
             {
-                SendNewLogMessage(error.ToString(),LogMessageType.Error);
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
 
             return "";
@@ -671,7 +713,7 @@ namespace OsEngine.OsTrader.Panels.Tab
             }
             if (candlesOne == null)
             {
-                ValueForm value = _valuesToFormula.Find(v => v.Name == valOne);
+                ValueSave value = _valuesToFormula.Find(v => v.Name == valOne);
                 if (value == null)
                 {
                     return "";
@@ -696,7 +738,7 @@ namespace OsEngine.OsTrader.Panels.Tab
             }
             if (candlesTwo == null)
             {
-                ValueForm value = _valuesToFormula.Find(v => v.Name == valTwo);
+                ValueSave value = _valuesToFormula.Find(v => v.Name == valTwo);
                 if (value == null)
                 {
                     return "";
@@ -725,11 +767,11 @@ namespace OsEngine.OsTrader.Panels.Tab
                 znak = "devide";
             }
 
-            ValueForm exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
+            ValueSave exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
 
             if (exitVal == null)
             {
-                exitVal = new ValueForm();
+                exitVal = new ValueSave();
                 exitVal.Name = "B" +  valOne + znak + valTwo;
                 exitVal.ValueCandles = new List<Candle>();
                 _valuesToFormula.Add(exitVal);
@@ -760,12 +802,12 @@ namespace OsEngine.OsTrader.Panels.Tab
                     if (candlesOne[i1].TimeStart <= exitCandles[exitCandles.Count - 1].TimeStart &&
                         indexStartFirst == 0)
                     {
-                        indexStartFirst = i1;
+                        indexStartFirst = i1+1;
                     }
                     if (candlesTwo[i2].TimeStart <= exitCandles[exitCandles.Count - 1].TimeStart &&
                         indexStartSecond == 0)
                     {
-                        indexStartSecond = i2;
+                        indexStartSecond = i2+1;
                     }
                     if (indexStartSecond != 0 &&
                         indexStartFirst != 0)
@@ -807,6 +849,11 @@ namespace OsEngine.OsTrader.Panels.Tab
             if (valOne[0] == 'A')
             {
                 int iOne = Convert.ToInt32(valOne.Split('A')[1]);
+
+                if (iOne >= Tabs.Count)
+                {
+                    return "";
+                }
                 candlesOne = Tabs[iOne].Candles(true);
                 if(candlesOne == null)
                 {
@@ -815,7 +862,7 @@ namespace OsEngine.OsTrader.Panels.Tab
             }
             if (candlesOne == null)
             {
-                ValueForm value = _valuesToFormula.Find(v => v.Name == valOne);
+                ValueSave value = _valuesToFormula.Find(v => v.Name == valOne);
                 if (value == null)
                 {
                     return "";
@@ -849,11 +896,11 @@ namespace OsEngine.OsTrader.Panels.Tab
                 znak = "devide";
             }
 
-            ValueForm exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
+            ValueSave exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
 
             if (exitVal == null)
             {
-                exitVal = new ValueForm();
+                exitVal = new ValueSave();
                 exitVal.Name = "B" + valOne + znak + valTwo;
                 exitVal.ValueCandles = new List<Candle>();
                 _valuesToFormula.Add(exitVal);
@@ -881,7 +928,7 @@ namespace OsEngine.OsTrader.Panels.Tab
                     if (candlesOne[i1].TimeStart <= exitCandles[exitCandles.Count - 1].TimeStart &&
                         indexStartFirst == 0)
                     {
-                        indexStartFirst = i1;
+                        indexStartFirst = i1+1;
                         break;
                     }
                 }
@@ -916,7 +963,7 @@ namespace OsEngine.OsTrader.Panels.Tab
             }
             if (candlesTwo == null)
             {
-                ValueForm value = _valuesToFormula.Find(v => v.Name == valTwo);
+                ValueSave value = _valuesToFormula.Find(v => v.Name == valTwo);
                 if (value == null)
                 {
                     return "";
@@ -945,11 +992,11 @@ namespace OsEngine.OsTrader.Panels.Tab
                 znak = "devide";
             }
 
-            ValueForm exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
+            ValueSave exitVal = _valuesToFormula.Find(val => val.Name == "B" + valOne + znak + valTwo);
 
             if (exitVal == null)
             {
-                exitVal = new ValueForm();
+                exitVal = new ValueSave();
                 exitVal.Name = "B" +  valOne + znak + valTwo;
                 exitVal.ValueCandles = new List<Candle>();
                 _valuesToFormula.Add(exitVal);
@@ -976,7 +1023,7 @@ namespace OsEngine.OsTrader.Panels.Tab
                     if (candlesTwo[i2].TimeStart <= exitCandles[exitCandles.Count - 1].TimeStart &&
                         indexStartSecond == 0)
                     {
-                        indexStartSecond = i2;
+                        indexStartSecond = i2+1;
                         break;
                     }
                 }
@@ -1133,6 +1180,14 @@ namespace OsEngine.OsTrader.Panels.Tab
             _chartMaster.DeleteIndicator(indicator);
         }
 
+        /// <summary>
+        /// индикаторы доступные у индекса
+        /// </summary>
+        public List<IIndicatorCandle> Indicators
+        {
+            get { return _chartMaster.Indicators; }
+        } 
+
 // логирование
 
         /// <summary>
@@ -1157,7 +1212,7 @@ namespace OsEngine.OsTrader.Panels.Tab
     /// <summary>
     /// объект для хранения промежуточных данных по индексу
     /// </summary>
-    public class ValueForm
+    public class ValueSave
     {
         /// <summary>
         /// имя

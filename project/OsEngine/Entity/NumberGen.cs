@@ -26,6 +26,11 @@ namespace OsEngine.Entity
                     _neadToSave = false;
                     Save();
                 }
+
+                if (!MainWindow.ProccesIsWorked)
+                {
+                    return;
+                }
             }
         }
 
@@ -46,12 +51,13 @@ namespace OsEngine.Entity
         /// </summary>
         public static int GetNumberDeal()
         {
-            if (_isFirstTime == true && !ServerMaster.IsTester)
+            if (_isFirstTime == true && ServerMaster.StartProgram == ServerStartProgramm.IsOsTrader)
             {
                 _isFirstTime = false;
                 Load();
 
                 Thread saver = new Thread(SaverSpace);
+                saver.Name = "NumberGeneratorThread";
                 saver.IsBackground = true;
                 saver.Start();
             }
@@ -67,13 +73,14 @@ namespace OsEngine.Entity
         /// </summary>
         public static int GetNumberOrder()
         {
-            if (_isFirstTime == true && !ServerMaster.IsTester)
+            if (_isFirstTime == true && ServerMaster.StartProgram == ServerStartProgramm.IsOsTrader)
             {
                 _isFirstTime = false;
                 Load();
 
                 Thread saver = new Thread(SaverSpace);
                 saver.IsBackground = true;
+                saver.Name = "NumberGeneratorThread";
                 saver.Start();
             }
 

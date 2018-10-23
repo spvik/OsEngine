@@ -6,9 +6,11 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
+using OsEngine.Entity;
 using OsEngine.Logging;
 using OsEngine.Market.Servers;
 using MessageBox = System.Windows.Forms.MessageBox;
@@ -48,39 +50,50 @@ namespace OsEngine.OsData
             _log.Listen(this);
 
             Load();
+            LoadSettings();
 
             CreateSetGrid();
             RePaintSetGrid();
 
-            try
-            {
-                ServerMaster.CreateServer(ServerType.Finam, false);
-                ServerMaster.CreateServer(ServerType.Quik,false);
-                ServerMaster.CreateServer(ServerType.Plaza, false);
-                ServerMaster.CreateServer(ServerType.SmartCom, false);
-                ServerMaster.CreateServer(ServerType.InteractivBrokers, false);
-               
-
-                List<IServer> servers = ServerMaster.GetServers();
-
-                for (int i = 0; i < servers.Count; i++)
-                {
-                    servers[i].ConnectStatusChangeEvent += ServerStatusChangeEvent;
-                    servers[i].LogMessageEvent += OsDataMaster_LogMessageEvent;
-                }
-                
-                SendNewLogMessage("Сервера успешно развёрнуты", LogMessageType.System);
-
-
-            }
-            catch (Exception)
-            {
-                SendNewLogMessage("Ошибка при создании серверов", LogMessageType.Error);
-            }
-
             CreateSourceGrid();
             RePaintSourceGrid();
-            ChangeActivSet(0);
+
+            ServerMaster.ServerCreateEvent += ServerMaster_ServerCreateEvent;
+        }
+
+        void ServerMaster_ServerCreateEvent()
+        {
+            List<IServer> servers = ServerMaster.GetServers();
+
+            for (int i = 0; i < servers.Count; i++)
+            {
+                servers[i].ConnectStatusChangeEvent -= ServerStatusChangeEvent;
+                servers[i].LogMessageEvent -= OsDataMaster_LogMessageEvent;
+
+                servers[i].ConnectStatusChangeEvent += ServerStatusChangeEvent;
+                servers[i].LogMessageEvent += OsDataMaster_LogMessageEvent;
+            }
+            RePaintSourceGrid();
+        }
+
+        public void StopPaint()
+        {
+			_isPaintEnabled = false;
+            if (_selectSet != null)
+            {
+                _selectSet.StopPaint();
+            }
+            
+        }
+
+        public void StartPaint()
+        {
+			_isPaintEnabled = true;
+            if (_selectSet != null)
+            {
+                _selectSet.StartPaint(_hostChart, _rectangle);
+            }
+            
         }
 
         void OsDataMaster_LogMessageEvent(string message, LogMessageType type)
@@ -185,7 +198,7 @@ namespace OsEngine.OsData
         private DataGridView _gridSources;
 
         /// <summary>
-        /// сохдать таблицу источников
+        /// создать таблицу источников
         /// </summary>
         private void CreateSourceGrid()
         {
@@ -238,28 +251,55 @@ namespace OsEngine.OsData
 
             _gridSources.Rows.Clear();
 
-            List<IServer> servers = ServerMaster.GetServers();
+            List<ServerType> servers = new ServerType[]
+            {
+               ServerType.Finam, ServerType.QuikDde, ServerType.QuikLua, ServerType.SmartCom, ServerType.Plaza, 
+                ServerType.Oanda, ServerType.BitMex, ServerType.Kraken ,ServerType.Binance,ServerType.BitStamp,ServerType.NinjaTrader
+            }.ToList();
+
+            List<IServer> serversCreate = ServerMaster.GetServers();
+
+            if (serversCreate == null)
+            {
+                serversCreate = new List<IServer>();
+            }
 
             for (int i = 0; i < servers.Count; i++)
             {
                 DataGridViewRow row1 = new DataGridViewRow();
                 row1.Cells.Add(new DataGridViewTextBoxCell());
-                row1.Cells[0].Value = servers[i].ServerType;
+                row1.Cells[0].Value = servers[i];
                 row1.Cells.Add(new DataGridViewTextBoxCell());
-                row1.Cells[1].Value = servers[i].ServerStatus;
 
-                if (servers[i].ServerStatus == ServerConnectStatus.Connect)
+                IServer server = serversCreate.Find(s => s.ServerType == servers[i]);
+
+                if (server == null)
                 {
+                    row1.Cells[1].Value = "Disabled";
+                }
+                else if (server != null && server.ServerStatus == ServerConnectStatus.Connect)
+                {
+                    row1.Cells[1].Value = "Connect";
                     DataGridViewCellStyle style = new DataGridViewCellStyle();
                     style.BackColor = Color.DarkSeaGreen;
                     style.SelectionBackColor = Color.SeaGreen;
                     row1.Cells[1].Style = style;
                     row1.Cells[0].Style = style;
                 }
+                else
+                {
+                    row1.Cells[1].Value = "Disconnect";
+                    DataGridViewCellStyle style = new DataGridViewCellStyle();
+                    style.BackColor = Color.FloralWhite;
+                    style.SelectionBackColor = Color.DarkSalmon;
+                    row1.Cells[1].Style = style;
+                    row1.Cells[0].Style = style;
+                }
 
                 _gridSources.Rows.Add(row1);
             }
-
+            _gridSources[1, 0].Selected = true; // Выбрать невидимую строку, чтобы убрать выделение по умолчанию с грида.
+            _gridSources.ClearSelection();
 
         }
 
@@ -272,11 +312,28 @@ namespace OsEngine.OsData
             {
                 return;
             }
-            ServerMaster.GetServers()[_gridSources.CurrentCell.RowIndex].ShowDialog();
+
+            ServerType type;
+            Enum.TryParse(_gridSources.Rows[_gridSources.CurrentCell.RowIndex].Cells[0].Value.ToString(), out type);
+
+            if (ServerMaster.GetServers() == null)
+            {
+                ServerMaster.CreateServer(type,false);
+            }
+
+            IServer server = ServerMaster.GetServers().Find(s => s.ServerType == type);
+
+            if (server == null)
+            {
+                ServerMaster.CreateServer(type, false);
+                server = ServerMaster.GetServers().Find(s => s.ServerType == type);
+            }
+
+            server.ShowDialog();
         }
 
         /// <summary>
-        /// событие измениня статуса сервера
+        /// событие изменения статуса сервера
         /// </summary>
         /// <param name="newState"></param>
         void ServerStatusChangeEvent(string newState)
@@ -314,7 +371,7 @@ namespace OsEngine.OsData
 
             DataGridViewColumn colum0 = new DataGridViewColumn();
             colum0.CellTemplate = cell0;
-            colum0.HeaderText = @"Назавние";
+            colum0.HeaderText = @"Название";
             colum0.ReadOnly = true;
             colum0.Width = 100;
             newGrid.Columns.Add(colum0);
@@ -337,33 +394,45 @@ namespace OsEngine.OsData
         /// </summary>
         private void RePaintSetGrid()
         {
-            if (_gridset.InvokeRequired)
+            try
             {
-                _gridset.Invoke(new Action(RePaintSetGrid));
-                return;
-            }
-            _gridset.Rows.Clear();
-
-            for (int i = 0;_sets != null && i < _sets.Count; i++)
-            {
-                DataGridViewRow nRow = new DataGridViewRow();
-
-                nRow.Cells.Add(new DataGridViewTextBoxCell());
-                nRow.Cells[0].Value = _sets[i].SetName;
-
-                nRow.Cells.Add(new DataGridViewTextBoxCell());
-                nRow.Cells[1].Value = _sets[i].Regime;
-
-                if (_sets[i].Regime == DataSetState.On)
+                if (_gridset.InvokeRequired)
                 {
-                    DataGridViewCellStyle style = new DataGridViewCellStyle();
-                    style.BackColor = Color.DarkSeaGreen;
-                    style.SelectionBackColor = Color.SeaGreen;
-                    nRow.Cells[1].Style = style;
-                    nRow.Cells[0].Style = style;
+                    _gridset.Invoke(new Action(RePaintSetGrid));
+                    return;
                 }
+                _gridset.Rows.Clear();
 
-                _gridset.Rows.Add(nRow);
+                for (int i = 0; _sets != null && i < _sets.Count; i++)
+                {
+                    DataGridViewRow nRow = new DataGridViewRow();
+
+                    nRow.Cells.Add(new DataGridViewTextBoxCell());
+                    nRow.Cells[0].Value = _sets[i].SetName;
+
+                    nRow.Cells.Add(new DataGridViewTextBoxCell());
+                    nRow.Cells[1].Value = _sets[i].Regime;
+
+                    if (_sets[i].Regime == DataSetState.On)
+                    {
+                        DataGridViewCellStyle style = new DataGridViewCellStyle();
+                        style.BackColor = Color.DarkSeaGreen;
+                        style.SelectionBackColor = Color.SeaGreen;
+                        nRow.Cells[1].Style = style;
+                        nRow.Cells[0].Style = style;
+                    }
+
+                    _gridset.Rows.Add(nRow);
+                }
+                if (_gridset.Rows.Count != 0)
+                {
+                    _gridset[0, 0].Selected = true; // Выбрать невидимую строку, чтобы убрать выделение по умолчанию с грида.
+                    _gridset.ClearSelection();
+                }
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
         }
 
@@ -376,8 +445,10 @@ namespace OsEngine.OsData
             {
                 return;
             }
-            RedactThisSet(_gridset.CurrentCell.RowIndex);
+            int _rowIndex = _gridset.CurrentCell.RowIndex;
+            RedactThisSet(_rowIndex);
             RePaintSetGrid();
+            _gridset.Rows[_rowIndex].Selected = true; // Вернуть фокус на строку, которую редактировал.
         }
 
         /// <summary>
@@ -430,7 +501,8 @@ namespace OsEngine.OsData
         /// </summary>
         void RedactSet_Click(object sender, EventArgs e)
         {
-            if (_gridset.CurrentCell.RowIndex <= -1)
+            if (_gridset.CurrentCell == null ||
+                _gridset.CurrentCell.RowIndex <= -1)
             {
                 return;
             }
@@ -442,7 +514,16 @@ namespace OsEngine.OsData
         /// </summary>
         void DeleteSet_Click(object sender, EventArgs e)
         {
-            if (_gridset.CurrentCell.RowIndex <= -1)
+            if (_gridset.CurrentCell == null || 
+                _gridset.CurrentCell.RowIndex <= -1)
+            {
+                return;
+            }
+
+            AcceptDialogUi ui = new AcceptDialogUi("Вы собираетесь удалить сет. Вы уверены?");
+            ui.ShowDialog();
+
+            if (ui.UserAcceptActioin == false)
             {
                 return;
             }
@@ -457,6 +538,15 @@ namespace OsEngine.OsData
         /// активный сет
         /// </summary>
         private OsDataSet _selectSet;
+
+        /// <summary>
+        /// Включена ли прорисовка графика
+        /// </summary>
+        private bool _isPaintEnabled = true;
+        public bool IsPaintEnabled
+        {
+            get { return _isPaintEnabled; }
+        }
 
         /// <summary>
         /// сменить активный сет
@@ -476,7 +566,6 @@ namespace OsEngine.OsData
             }
 
             OsDataSet currentSet = _sets[index];
-
             if (currentSet == _selectSet)
             {
                 return;
@@ -487,9 +576,13 @@ namespace OsEngine.OsData
             {
                 _selectSet.StopPaint();
             }
+           
 
             _selectSet = currentSet;
-            currentSet.StartPaint(_hostChart,_rectangle);
+            if (_isPaintEnabled)
+            {
+                currentSet.StartPaint(_hostChart, _rectangle);
+            }
         }
 
 // управление        
@@ -505,7 +598,13 @@ namespace OsEngine.OsData
             }
             OsDataSet set = new OsDataSet("Set_",_comboBoxSecurity,_comboBoxTimeFrame);
             set.NewLogMessageEvent += SendNewLogMessage;
-            set.ShowDialog();
+
+            if (!set.ShowDialog())
+            { // пользователь не нажал на кнопку принять в форме
+                set.Regime = DataSetState.Off;
+                set.Delete();
+                return;
+            }
 
             if (set.SetName == "Set_")
             {
@@ -518,6 +617,8 @@ namespace OsEngine.OsData
             if (_sets.Find(dataSet => dataSet.SetName == set.SetName) != null)
             {
                 MessageBox.Show(@"Создание сета прервано. Сет с таким именем уже существует!");
+                set.Regime = DataSetState.Off;
+                set.Delete();
                 return;
             }
 
@@ -562,8 +663,57 @@ namespace OsEngine.OsData
                 return;
             }
 
-            _sets[num].ShowDialog();
-            _sets[num].Save();
+            if (_sets[num].ShowDialog())
+            {
+                _sets[num].Save();
+            }
+        }
+        /// <summary>
+        /// сохранить настройки
+        /// </summary>
+        public void SaveSettings()
+        {
+            try
+            {
+                if (!Directory.Exists("Data\\"))
+                {
+                    Directory.CreateDirectory("Data\\");
+                }
+                using (StreamWriter writer = new StreamWriter("Data\\Settings.txt", false))
+                {
+                    writer.WriteLine(_isPaintEnabled);
+                    writer.Close();
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
+        }
+
+        /// <summary>
+        /// загрузить настройки
+        /// </summary>
+        private void LoadSettings()
+        {
+            if (!File.Exists("Data\\Settings.txt"))
+            {
+                return;
+            }
+
+            try
+            {
+                using (StreamReader reader = new StreamReader("Data\\Settings.txt"))
+                {
+                    _isPaintEnabled = Convert.ToBoolean(reader.ReadLine());
+
+                    reader.Close();
+                }
+            }
+            catch (Exception)
+            {
+                // ignored
+            }
         }
     }
 }

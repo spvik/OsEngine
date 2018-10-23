@@ -5,6 +5,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Text;
 using OsEngine.Market.Servers;
 
 namespace OsEngine.Entity
@@ -17,7 +19,7 @@ namespace OsEngine.Entity
         public Order()
         {
             State = OrderStateType.None;
-            TimeCreate = DateTime.Now;
+            TimeCreate = DateTime.MinValue;
             TimeCallBack = DateTime.MinValue;
             TimeCancel = DateTime.MinValue;
             NumberMarket = "";
@@ -28,7 +30,7 @@ namespace OsEngine.Entity
         /// номер ордера в роботе
         /// </summary>
         public int NumberUser;  
-
+        
         /// <summary>
         /// номер ордера на бирже
         /// </summary>
@@ -68,23 +70,20 @@ namespace OsEngine.Entity
         /// <summary>
         /// объём
         /// </summary>
-        public int Volume;
+        public decimal Volume;
 
         /// <summary>
         /// объём исполнившийся
         /// </summary>
-        public int VolumeExecute
+        public decimal VolumeExecute
         {
             get
             {
-                if (_trades != null)
+                if (_trades != null && (_volumeExecute == 0 || _volumeExecuteChange))
                 {
-                    int volumeExecute = 0;
-                    foreach (var trade in _trades)
-                    {
-                        volumeExecute += trade.Volume;
-                    }
-                    return volumeExecute;
+                    _volumeExecute = _trades.Sum(trade => trade.Volume);
+                    _volumeExecuteChange = false;
+                    return _volumeExecute;
                 }
                 else
                 {
@@ -94,18 +93,27 @@ namespace OsEngine.Entity
             }
             set { _volumeExecute = value; }
         }
-        private int _volumeExecute;
+        private decimal _volumeExecute;
+        private bool _volumeExecuteChange;
 
         public List<MyTrade> MyTrades
         {
             get { return _trades; }
-        } 
+        }
 
         /// <summary>
         /// статус ордера: None, Pending, Done, Patrial, Fail
         /// </summary>
-        public OrderStateType State; 
+        public OrderStateType State 
+        {
+            get { return _state; }
+            set
+            {
+                _state = value;
+            } 
+        }
 
+        private OrderStateType _state;
         /// <summary>
         /// тип цены ордера. Limit, Market
         /// </summary>
@@ -131,6 +139,9 @@ namespace OsEngine.Entity
         /// </summary>
         public DateTime TimeCreate;
 
+        /// <summary>
+        /// скорость выставления заявки
+        /// </summary>
         public TimeSpan TimeRoundTrip
         {
             get
@@ -142,6 +153,24 @@ namespace OsEngine.Entity
                 }
 
                 return (TimeCallBack - TimeCreate);
+            }
+        }
+
+        /// <summary>
+        /// время когда по ордеру прошла первая сделка
+        /// если сделок по ордеру ещё нет, вернёт время создания ордера
+        /// </summary>
+        public DateTime TimeExecuteFirstTrade
+        {
+            get
+            {
+                if (MyTrades == null ||
+                    MyTrades.Count == 0)
+                {
+                    return TimeCreate;
+                }
+
+                return MyTrades[0].Time;
             }
         }
 
@@ -171,7 +200,11 @@ namespace OsEngine.Entity
         /// </summary>
         public void SetTrade(MyTrade trade)
         {
-            if (trade.NumberOrderParent != NumberMarket)
+            if ((trade.NumberOrderParent != NumberMarket &&
+                ServerType != ServerType.Oanda) ||
+                (ServerType == ServerType.Oanda &&
+                trade.NumberOrderParent != NumberMarket &&
+                trade.NumberOrderParent != NumberUser.ToString()))
             {
                 return;
             }
@@ -187,6 +220,7 @@ namespace OsEngine.Entity
                 }
             }
 
+            _volumeExecuteChange = true;
 
             if (_trades == null)
             {
@@ -224,6 +258,11 @@ namespace OsEngine.Entity
                 volumeExecute += _trades[i].Volume;
             }
 
+            if (volumeExecute == 0)
+            {
+                return Price;
+            }
+
             price = price/volumeExecute;
 
             return price;
@@ -236,7 +275,7 @@ namespace OsEngine.Entity
         {
             if (_trades == null)
             {
-                return DateTime.MinValue;
+                return TimeCallBack;
             }
 
            return _trades[_trades.Count - 1].Time;
@@ -264,47 +303,47 @@ namespace OsEngine.Entity
         /// <summary>
         /// взять строку для сохранения
         /// </summary>
-        public string GetStringForSave()
+        public StringBuilder GetStringForSave()
         {
-            string result = "";
+            StringBuilder result = new StringBuilder();
 
-            result += NumberUser + "@";
+            result.Append(NumberUser + "@");
 
-            result += ServerType + "@";
+            result.Append( ServerType + "@");
 
-            result += NumberMarket.ToString(new CultureInfo("ru-RU")) + "@";
-            result += Side + "@";
-            result += Price.ToString(new CultureInfo("ru-RU")) + "@";
-            result += PriceReal.ToString(new CultureInfo("ru-RU")) + "@";
-            result += Volume.ToString(new CultureInfo("ru-RU")) + "@";
-            result += VolumeExecute.ToString(new CultureInfo("ru-RU")) + "@";
-            result += State + "@";
-            result += TypeOrder + "@";
-            result += TimeCallBack.ToString(new CultureInfo("ru-RU")) + "@";
+            result.Append(NumberMarket.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(Side + "@");
+            result.Append(Price.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(PriceReal.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(Volume.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(VolumeExecute.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(State + "@");
+            result.Append(TypeOrder + "@");
+            result.Append(TimeCallBack.ToString(new CultureInfo("ru-RU")) + "@");
 
-            result += SecurityNameCode + "@";
-            result += PortfolioNumber.Replace('@', '%') +"@";
+            result.Append(SecurityNameCode + "@");
+            result.Append(PortfolioNumber.Replace('@', '%') +"@");
 
-            result += TimeCreate.ToString(new CultureInfo("ru-RU")) + "@";
-            result += TimeCancel.ToString(new CultureInfo("ru-RU")) + "@";
-            result += TimeCallBack.ToString(new CultureInfo("ru-RU")) + "@";
-            result += LifeTime + "@";
+            result.Append(TimeCreate.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(TimeCancel.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(TimeCallBack.ToString(new CultureInfo("ru-RU")) + "@");
+            result.Append(LifeTime + "@");
         // сделки, которыми открывался ордер и рассчёт цены исполнения ордера
 
             if (_trades == null)
             {
-                result += "null";
+                result.Append("null");
             }
             else
             {
                 for (int i = 0; i < _trades.Count; i++)
                 {
-                    result += _trades[i].GetStringFofSave() + "*";
+                    result.Append(_trades[i].GetStringFofSave() + "*");
                 }
             }
-            result += "@";
+            result.Append("@");
 
-            result += Comment;
+            result.Append(Comment);
 
             return result;
         }
@@ -314,17 +353,19 @@ namespace OsEngine.Entity
         /// </summary>
         public void SetOrderFromString(string saveString)
         {
-            string [] saveArray = saveString.Split('@');
+            string[] saveArray = saveString.Split('@');
             NumberUser = Convert.ToInt32(saveArray[0]);
 
             Enum.TryParse(saveArray[1], true, out ServerType);
 
             NumberMarket = saveArray[2];
             Enum.TryParse(saveArray[3], true, out Side);
-            Price = Convert.ToDecimal(saveArray[4]);
-            Volume = Convert.ToInt32(saveArray[6]);
-            VolumeExecute = Convert.ToInt32(saveArray[7]);
-            Enum.TryParse(saveArray[8], true, out State);
+            Price = Convert.ToDecimal(saveArray[4].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            Volume = Convert.ToDecimal(saveArray[6].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+            VolumeExecute = Convert.ToDecimal(saveArray[7].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+
+
+            Enum.TryParse(saveArray[8], true, out _state);
             Enum.TryParse(saveArray[9], true, out TypeOrder);
             TimeCallBack = Convert.ToDateTime(saveArray[10]);
 
@@ -335,7 +376,7 @@ namespace OsEngine.Entity
             TimeCreate = Convert.ToDateTime(saveArray[13]);
             TimeCancel = Convert.ToDateTime(saveArray[14]);
             TimeCallBack = Convert.ToDateTime(saveArray[15]);
-            TimeSpan.TryParse(saveArray[16],out LifeTime);
+            TimeSpan.TryParse(saveArray[16], out LifeTime);
             // сделки, которыми открывался ордер и рассчёт цены исполнения ордера
 
             if (saveArray[17] == "null")
@@ -344,11 +385,11 @@ namespace OsEngine.Entity
             }
             else
             {
-                string [] tradesArray = saveArray[17].Split('*');
+                string[] tradesArray = saveArray[17].Split('*');
 
                 _trades = new List<MyTrade>();
 
-                for (int i = 0; i < tradesArray.Length-1; i++)
+                for (int i = 0; i < tradesArray.Length - 1; i++)
                 {
                     _trades.Add(new MyTrade());
                     _trades[i].SetTradeFromString(tradesArray[i]);
@@ -357,6 +398,7 @@ namespace OsEngine.Entity
             Comment = saveArray[18];
         }
     }
+
 
     /// <summary>
     /// тип цены для ордера

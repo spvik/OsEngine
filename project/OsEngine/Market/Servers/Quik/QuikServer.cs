@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using OsEngine.Entity;
@@ -42,13 +43,14 @@ namespace OsEngine.Market.Servers.Quik
             worker.IsBackground = true;
             worker.Start();
 
+            _tickStorage = new ServerTickStorage(this);
+            _tickStorage.NeadToSave = NeadToSaveTicks;
+            _tickStorage.DaysToLoad = CountDaysTickNeadToSave;
+            _tickStorage.TickLoadedEvent += _tickStorage_TickLoadedEvent;
+            _tickStorage.LogMessageEvent += SendLogMessage;
+
             if (neadToLoadTicks)
             {
-                _tickStorage = new ServerTickStorage(this);
-                _tickStorage.NeadToSave = NeadToSaveTicks;
-                _tickStorage.DaysToLoad = CountDaysTickNeadToSave;
-                _tickStorage.TickLoadedEvent += _tickStorage_TickLoadedEvent;
-                _tickStorage.LogMessageEvent += SendLogMessage;
                 _tickStorage.LoadTick();
             }
 
@@ -62,7 +64,7 @@ namespace OsEngine.Market.Servers.Quik
 
             _logMaster = new Log("QuikServer");
             _logMaster.Listen(this);
-            ServerType = ServerType.Quik;
+            ServerType = ServerType.QuikDde;
 
             Thread statusWatcher = new Thread(StatusWatcherArea);
             statusWatcher.IsBackground = true;
@@ -714,9 +716,7 @@ namespace OsEngine.Market.Servers.Quik
             ui.ShowDialog();
         }
 
-
 // Заказ инструмента на скачивание
-
 
         private object _lockerStartThisSecurity = new object();
 
@@ -849,45 +849,58 @@ namespace OsEngine.Market.Servers.Quik
                 AllTradesTableChangeEvent(tradesNew);
             }
 
+            BathTradeMarketDepthData(tradesNew);
+
+// сортируем сделки по хранилищам
+
             if (_allTrades == null)
             {
                 _allTrades = new List<Trade>[1];
-                _allTrades[0] = new List<Trade>(tradesNew);
+                _allTrades[0] = new List<Trade>();
+                _allTrades[0].Add(tradesNew[0]);
             }
-            else
+
+            for (int indTrade = 0; indTrade < tradesNew.Count; indTrade++)
             {
-// сортируем сделки по хранилищам
-                for (int indTrade = 0; indTrade < tradesNew.Count; indTrade++)
+                Trade trade = tradesNew[indTrade];
+
+                bool isSave = false;
+                for (int i = 0; i < _allTrades.Length; i++)
                 {
-                    Trade trade = tradesNew[indTrade];
-                    bool isSave = false;
-                    for (int i = 0; i < _allTrades.Length; i++)
+                    if (_allTrades[i] != null && _allTrades[i].Count != 0 &&
+                        _allTrades[i][0].SecurityNameCode == trade.SecurityNameCode)
                     {
-                        if (_allTrades[i] != null && _allTrades[i].Count != 0 &&
-                            _allTrades[i][0].SecurityNameCode == trade.SecurityNameCode)
+                        // если для этого инструметна уже есть хранилище, сохраняем и всё
+                        isSave = true;
+                        if (_allTrades[i][_allTrades[i].Count - 1].Time > trade.Time)
                         {
-                            // если для этого инструметна уже есть хранилище, сохраняем и всё
-                            isSave = true;
-                            if (_allTrades[i][_allTrades[i].Count - 1].Time > trade.Time)
-                            {
-                                break;
-                            }
-                            _allTrades[i].Add(trade);
                             break;
                         }
-                    }
-                    if (isSave == false)
-                    {
-                        // хранилища для инструмента нет
-                        List<Trade>[] allTradesNew = new List<Trade>[_allTrades.Length + 1];
-                        for (int i = 0; i < _allTrades.Length; i++)
+
+                        Trade lastTrade = _allTrades[i][_allTrades[i].Count - 1];
+
+                        if (lastTrade.Time.Hour == 23 && trade.Time.Hour == 23 &&
+                            lastTrade.Time.Day != trade.Time.Day)
                         {
-                            allTradesNew[i] = _allTrades[i];
+                            // иногда из квик приходит трейд в конце сессии с другой датой
+                            break;
                         }
-                        allTradesNew[allTradesNew.Length - 1] = new List<Trade>();
-                        allTradesNew[allTradesNew.Length - 1].Add(trade);
-                        _allTrades = allTradesNew;
+
+                        _allTrades[i].Add(trade);
+                        break;
                     }
+                }
+                if (isSave == false)
+                {
+                    // хранилища для инструмента нет
+                    List<Trade>[] allTradesNew = new List<Trade>[_allTrades.Length + 1];
+                    for (int i = 0; i < _allTrades.Length; i++)
+                    {
+                        allTradesNew[i] = _allTrades[i];
+                    }
+                    allTradesNew[allTradesNew.Length - 1] = new List<Trade>();
+                    allTradesNew[allTradesNew.Length - 1].Add(trade);
+                    _allTrades = allTradesNew;
                 }
             }
 
@@ -897,9 +910,10 @@ namespace OsEngine.Market.Servers.Quik
             if (_tradesStatus == ServerConnectStatus.Connect &&
                 tradesNew[tradesNew.Count - 1].Time.AddSeconds(20) < _serverTime)
             {
-                
+
                 _tradesStatus = ServerConnectStatus.Disconnect;
-                SendLogMessage("Зафиксирован вход устаревших тиков. Запущена процедура перезагрузки сервера", LogMessageType.System);
+                SendLogMessage("Зафиксирован вход устаревших тиков. Запущена процедура перезагрузки сервера",
+                    LogMessageType.System);
                 _status = ServerConnectStatus.Disconnect;
                 Thread.Sleep(300);
             }
@@ -988,6 +1002,56 @@ namespace OsEngine.Market.Servers.Quik
 // стакан
 
         /// <summary>
+        /// стаканы по инструментам
+        /// </summary>
+        private List<MarketDepth> _marketDepths = new List<MarketDepth>();
+
+        /// <summary>
+        /// взять стакан по названию бумаги
+        /// </summary>
+        public MarketDepth GetMarketDepth(string securityName)
+        {
+            return _marketDepths.Find(m => m.SecurityNameCode == securityName);
+        }
+
+// сохранение расширенных данных по трейду
+
+        /// <summary>
+        /// прогрузить трейды данными стакана
+        /// </summary>
+        private void BathTradeMarketDepthData(List<Trade> trades)
+        {
+            MarketDepth depth = null;
+
+            for (int i = 0; i < trades.Count; i++)
+            {
+                if (i != 0 && depth == null &&
+                    trades[i - 1].SecurityNameCode == trades[i].SecurityNameCode)
+                {
+                    continue;
+                }
+
+                if (depth == null ||
+                    depth.SecurityNameCode != trades[i].SecurityNameCode)
+                {
+                    depth = _marketDepths.Find(d => d.SecurityNameCode == trades[i].SecurityNameCode);
+                }
+
+                if (depth == null ||
+                    depth.Asks == null || depth.Asks.Count == 0 ||
+                    depth.Bids == null || depth.Bids.Count == 0)
+                {
+                    return;
+                }
+
+                trades[i].Ask = depth.Asks[0].Price;
+                trades[i].Bid = depth.Bids[0].Price;
+                trades[i].BidsVolume = depth.BidSummVolume;
+                trades[i].AsksVolume = depth.AskSummVolume;
+            }
+        }
+
+        /// <summary>
         /// пришёл новый стакан
         /// </summary>
         void _serverDde_UpdateGlass(MarketDepth marketDepth)
@@ -998,6 +1062,17 @@ namespace OsEngine.Market.Servers.Quik
             {
                 NewMarketDepthEvent(marketDepth);
             }
+
+            // грузим стаканы в хранилище
+            for (int i = 0; i < _marketDepths.Count; i++)
+            {
+                if (_marketDepths[i].SecurityNameCode == marketDepth.SecurityNameCode)
+                {
+                    _marketDepths[i] = marketDepth;
+                    return;
+                }
+            }
+            _marketDepths.Add(marketDepth);
         }
 
         /// <summary>
@@ -1007,15 +1082,15 @@ namespace OsEngine.Market.Servers.Quik
 
 // новая моя сделка
 
-        private void PfnTradeStatusCallback(int nMode, double dNumber, double dOrderNumber, string classCode,
-        string secCode, double dPrice, int nQty, double dValue, int nIsSell, int nTradeDescriptor)
+        private void PfnTradeStatusCallback(int nMode, ulong nNumber, ulong nOrderNumber, string classCode,
+        string secCode, double dPrice, long nQty, double dValue, int nIsSell, IntPtr pTradeDescriptor)
         {
             try
             {
 
                 MyTrade trade = new MyTrade();
-                trade.NumberTrade = dNumber.ToString();
-                trade.NumberOrderParent = dOrderNumber.ToString();
+                trade.NumberTrade = nNumber.ToString();
+                trade.NumberOrderParent = nOrderNumber.ToString();
                 trade.Price = (decimal)dPrice;
                 trade.SecurityNameCode = secCode;
 
@@ -1028,7 +1103,7 @@ namespace OsEngine.Market.Servers.Quik
                     trade.Time = DateTime.Now;
                 }
 
-                trade.Volume = nQty;
+                trade.Volume = Convert.ToInt32(nQty);
 
                 if (_myTrades == null)
                 {
@@ -1434,26 +1509,29 @@ namespace OsEngine.Market.Servers.Quik
         /// <summary>
         /// входящие ордера по протоколам Trance2Quik
         /// </summary>
-        private void TransactionReplyCallback(Trans2Quik.QuikResult transactionResult, int transactionExtendedErrorCode,
-           int transactionReplyCode, int transId, double orderNum, string transactionReplyMessage)
+        private void TransactionReplyCallback(int nTransactionResult, int transactionExtendedErrorCode,
+           int transactionReplyCode, uint dwTransId, ulong dOrderNum, string transactionReplyMessage, IntPtr pTransReplyDescriptor)
         {
             try
             {
-                Order order = GetOrderFromUserId(transId.ToString());
+                Order order = GetOrderFromUserId(dwTransId.ToString());
 
                 if (order == null)
                 {
                     order = new Order();
-                    order.NumberUser = transId;
+                    order.NumberUser = Convert.ToInt32(dwTransId);
                 }
 
-                order.NumberMarket = orderNum.ToString(new CultureInfo("ru-RU"));
+                if (dOrderNum != 0)
+                {
+                    order.NumberMarket = dOrderNum.ToString(new CultureInfo("ru-RU"));
+                }
 
-                if (transactionReplyCode == 6 || transactionResult == Trans2Quik.QuikResult.FAILED && transactionReplyCode == 3)
+                if (transactionReplyCode == 6)
                 {
                     order.State = OrderStateType.Fail;
 
-                    SendLogMessage(transId + " Ошибка выставления заявки " + transactionReplyMessage, LogMessageType.System);
+                    SendLogMessage(dwTransId + " Ошибка выставления заявки " + transactionReplyMessage, LogMessageType.System);
 
                     if (NewOrderIncomeEvent != null)
                     {
@@ -1462,7 +1540,11 @@ namespace OsEngine.Market.Servers.Quik
                 }
                 else
                 {
-
+                    if (order.NumberMarket == "0" || dOrderNum == 0)
+                    {
+                        return;
+                    }
+                    order.State = OrderStateType.Activ;
                     if (NewOrderIncomeEvent != null)
                     {
                         NewOrderIncomeEvent(order);
@@ -1476,19 +1558,23 @@ namespace OsEngine.Market.Servers.Quik
         }
 
         // из трансТуКвик пришло оповещение об ордере
-        private void PfnOrderStatusCallback(int nMode, int dwTransId, double dNumber, string classCode, string secCode,
-            double dPrice, int nBalance, double dValue, int nIsSell, int nStatus, int nOrderDescriptor)
+        private void PfnOrderStatusCallback(int nMode, int dwTransId, ulong nOrderNum, string classCode, string secCode,
+            double dPrice, long l, double dValue, int nIsSell, int nStatus, IntPtr pOrderDescriptor)
         {
             try
             {
+                if (dwTransId == 0)
+                {
+                    return;
+                }
                 Order order = new Order();
 
                 order.SecurityNameCode = secCode;
-                order.ServerType = ServerType.Quik;
+                order.ServerType = ServerType.QuikDde;
                 order.Price = (decimal)dPrice;
                 order.Volume = (int)dValue;
                 order.NumberUser = dwTransId;
-                order.NumberMarket = dNumber.ToString();
+                order.NumberMarket = nOrderNum.ToString();
 
                 if (ServerTime != DateTime.MinValue)
                 {

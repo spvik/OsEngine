@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using OsEngine.Entity;
 using OsEngine.Logging;
@@ -47,6 +48,14 @@ namespace OsEngine.Market.Servers.InteractivBrokers
 
             _ordersToExecute = new ConcurrentQueue<Order>();
             _ordersToCansel = new ConcurrentQueue<Order>();
+            _ordersToSend = new ConcurrentQueue<Order>();
+            _tradesToSend = new ConcurrentQueue<List<Trade>>();
+            _portfolioToSend = new ConcurrentQueue<List<Portfolio>>();
+            _securitiesToSend = new ConcurrentQueue<List<Security>>();
+            _myTradesToSend = new ConcurrentQueue<MyTrade>();
+            _newServerTime = new ConcurrentQueue<DateTime>();
+            _candleSeriesToSend = new ConcurrentQueue<CandleSeries>();
+            _marketDepthsToSend = new ConcurrentQueue<MarketDepth>();
 
             Thread ordersExecutor = new Thread(ExecutorOrdersThreadArea);
             ordersExecutor.CurrentCulture = new CultureInfo("ru-RU");
@@ -67,15 +76,6 @@ namespace OsEngine.Market.Servers.InteractivBrokers
             threadDataSender.CurrentCulture = CultureInfo.InvariantCulture;
             threadDataSender.IsBackground = true;
             threadDataSender.Start();
-
-            _ordersToSend = new ConcurrentQueue<Order>();
-            _tradesToSend = new ConcurrentQueue<List<Trade>>();
-            _portfolioToSend = new ConcurrentQueue<List<Portfolio>>();
-            _securitiesToSend = new ConcurrentQueue<List<Security>>();
-            _myTradesToSend = new ConcurrentQueue<MyTrade>();
-            _newServerTime = new ConcurrentQueue<DateTime>();
-            _candleSeriesToSend = new ConcurrentQueue<CandleSeries>();
-            _marketDepthsToSend = new ConcurrentQueue<MarketDepth>();
 
             LoadIbSecurities();
         }
@@ -415,7 +415,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                 _ibClient.NewMarketDepth += _ibClient_NewMarketDepth;
                 _ibClient.NewMyTradeEvent += _ibClient_NewMyTradeEvent;
                 _ibClient.NewOrderEvent += _ibClient_NewOrderEvent;
-                _ibClient.NewTradeEvent += AddTick;
+                _ibClient.NewTradeEvent += AddTick; 
             }
         }
 
@@ -590,7 +590,6 @@ namespace OsEngine.Market.Servers.InteractivBrokers
         /// </summary>
         private object _serverLocker = new object();
 
-
 //работа потока рассылки входящих данных
 
         /// <summary>
@@ -642,7 +641,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
             {
                try
                 {
-                    if (_ordersToSend != null && _ordersToSend.Count != 0)
+                    if (!_ordersToSend.IsEmpty)
                     {
                         Order order;
                         if (_ordersToSend.TryDequeue(out order))
@@ -653,8 +652,8 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                             }
                         }
                     }
-                    else if (_myTradesToSend != null && _myTradesToSend.Count != 0 &&
-                             (_ordersToSend == null || _ordersToSend.Count == 0))
+                    else if (!_myTradesToSend.IsEmpty &&
+                             (_ordersToSend.IsEmpty))
                     {
                         MyTrade myTrade;
 
@@ -666,7 +665,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                             }
                         }
                     }
-                    else if (_tradesToSend != null && _tradesToSend.Count != 0)
+                    else if (!_tradesToSend.IsEmpty)
                     {
                         List<Trade> trades;
 
@@ -679,7 +678,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         }
                     }
 
-                    else if (_portfolioToSend != null && _portfolioToSend.Count != 0)
+                    else if (!_portfolioToSend.IsEmpty)
                     {
                         List<Portfolio> portfolio;
 
@@ -692,7 +691,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         }
                     }
 
-                    else if (_securitiesToSend != null && _securitiesToSend.Count != 0)
+                    else if (!_securitiesToSend.IsEmpty)
                     {
                         List<Security> security;
 
@@ -704,7 +703,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                             }
                         }
                     }
-                    else if (_newServerTime != null && _newServerTime.Count != 0)
+                    else if (!_newServerTime.IsEmpty)
                     {
                         DateTime time;
 
@@ -714,7 +713,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         }
                     }
 
-                    else if (_candleSeriesToSend != null && _candleSeriesToSend.Count != 0)
+                    else if (!_candleSeriesToSend.IsEmpty)
                     {
                         CandleSeries series;
 
@@ -727,7 +726,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         }
                     }
 
-                    else if (_marketDepthsToSend != null && _marketDepthsToSend.Count != 0)
+                    else if (!_marketDepthsToSend.IsEmpty)
                     {
                         MarketDepth depth;
 
@@ -751,7 +750,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
             }
         }
 
-//время сервера
+// время сервера
 
         private DateTime _serverTime;
 
@@ -894,7 +893,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
             }
         }
 
-//бумаги. То что пользователь вводит для подписки. Хранение и менеджмент
+// бумаги. То что пользователь вводит для подписки. Хранение и менеджмент
 
         /// <summary>
         /// показать окно настроек бумаг
@@ -1030,7 +1029,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
             }
         }
 
-//бумаги. формат Os.Engine
+// бумаги. формат Os.Engine
 
         private List<Security> _securities;
 
@@ -1073,6 +1072,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                 securityIb.ConId = contract.ConId;
                 securityIb.Currency = contract.Currency;
                 securityIb.Strike = contract.Strike;
+                securityIb.MinTick = contract.MinTick;
                 //securityIb.Symbol = symbol;
                 securityIb.TradingClass = contract.TradingClass;
 
@@ -1278,6 +1278,41 @@ namespace OsEngine.Market.Servers.InteractivBrokers
 // стакан
 
         /// <summary>
+        /// стаканы по инструментам
+        /// </summary>
+        private List<MarketDepth> _marketDepths = new List<MarketDepth>();
+
+        /// <summary>
+        /// взять стакан по названию бумаги
+        /// </summary>
+        public MarketDepth GetMarketDepth(string securityName)
+        {
+            return _marketDepths.Find(m => m.SecurityNameCode == securityName);
+        }
+
+// сохранение расширенных данных по трейду
+
+        /// <summary>
+        /// прогрузить трейды данными стакана
+        /// </summary>
+        private void BathTradeMarketDepthData(Trade trade)
+        {
+            MarketDepth depth = _marketDepths.Find(d => d.SecurityNameCode == trade.SecurityNameCode);
+
+            if (depth == null ||
+                depth.Asks == null || depth.Asks.Count == 0 ||
+                depth.Bids == null || depth.Bids.Count == 0)
+            {
+                return;
+            }
+
+            trade.Ask = depth.Asks[0].Price;
+            trade.Bid = depth.Bids[0].Price;
+            trade.BidsVolume = depth.BidSummVolume;
+            trade.AsksVolume = depth.AskSummVolume;
+        }
+
+        /// <summary>
         /// все стаканы
         /// </summary>
         private List<MarketDepth> _depths;
@@ -1290,6 +1325,11 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                 SecurityIb myContract = _secIB.Find(contract => contract.ConId == id);
 
                 if (myContract == null)
+                {
+                    return;
+                }
+
+                if (position > 10)
                 {
                     return;
                 }
@@ -1328,10 +1368,10 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                     sideLine = Side.Sell;
                 }
 
+                List<MarketDepthLevel> bids  = myDepth.Bids;
                 List<MarketDepthLevel> asks = myDepth.Asks;
-                List<MarketDepthLevel> bids = myDepth.Bids;
 
-                if (asks == null)
+                if (asks == null || asks.Count == 0)
                 {
                     asks = new List<MarketDepthLevel>();
                     bids = new List<MarketDepthLevel>();
@@ -1341,8 +1381,8 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         asks.Add(new MarketDepthLevel());
                         bids.Add(new MarketDepthLevel());
                     }
-                    myDepth.Asks = asks;
                     myDepth.Bids = bids;
+                    myDepth.Asks = asks;
                 }
 
                 if (operation == 2)
@@ -1351,17 +1391,17 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                     if (sideLine == Side.Buy)
                     {
                         // asks.RemoveAt(position);
-                        MarketDepthLevel level = asks[position];
-                        level.Bid = 0;
+                        MarketDepthLevel level = bids[position];
                         level.Ask = 0;
+                        level.Bid = 0;
                         level.Price = 0;
                     }
                     else if (sideLine == Side.Sell)
                     {
                         //bids.RemoveAt(position);
-                        MarketDepthLevel level = bids[position];
-                        level.Bid = 0;
+                        MarketDepthLevel level = asks[position];
                         level.Ask = 0;
+                        level.Bid = 0;
                         level.Price = 0;
                     }
                 }
@@ -1396,24 +1436,37 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                 { // нужно обновить
                     if (sideLine == Side.Buy)
                     {
-                        MarketDepthLevel level = asks[position];
-                        level.Bid = 0;
-                        level.Ask = Convert.ToDecimal(size);
-                        level.Price = price;
-                    }
-                    else if (sideLine == Side.Sell)
-                    {
                         MarketDepthLevel level = bids[position];
                         level.Bid = Convert.ToDecimal(size);
                         level.Ask = 0;
                         level.Price = price;
                     }
+                    else if (sideLine == Side.Sell)
+                    {
+                        MarketDepthLevel level = asks[position];
+                        level.Bid = 0;
+                        level.Ask = Convert.ToDecimal(size);
+                        level.Price = price;
+                    }
                 }
 
-                if (myDepth.Asks[0].Price != 0 &&
-                    myDepth.Bids[0].Price != 0)
+                if (myDepth.Bids[0].Price != 0 &&
+                    myDepth.Asks[0].Price != 0)
                 {
-                    _marketDepthsToSend.Enqueue(myDepth);
+                    MarketDepth copy = myDepth.GetCopy();
+                    _marketDepthsToSend.Enqueue(copy);
+
+                    // грузим стаканы в хранилище
+                    for (int i = 0; i < _marketDepths.Count; i++)
+                    {
+                        if (_marketDepths[i].SecurityNameCode == copy.SecurityNameCode)
+                        {
+                            _marketDepths[i] = copy;
+                            return;
+                        }
+                    }
+                    _marketDepths.Add(copy);
+
                 }
             }
             catch (Exception error)
@@ -1454,6 +1507,8 @@ namespace OsEngine.Market.Servers.InteractivBrokers
         {
             try
             {
+                BathTradeMarketDepthData(trade);
+
                 // сохраняем
                 if (_allTrades == null)
                 {
@@ -1582,7 +1637,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                         {
                             lock (_serverLocker)
                             {
-                                
+
                                 SecurityIb contractIb =
                                     _secIB.Find(
                                         contract =>
@@ -1593,6 +1648,44 @@ namespace OsEngine.Market.Servers.InteractivBrokers
                                 {
                                     return;
                                 }
+
+                                if (contractIb.MinTick < 1)
+                                {
+                                    int decimals = 0;
+                                    decimal minTick = Convert.ToDecimal(contractIb.MinTick);
+
+                                    while (true)
+                                    {
+                                        minTick = minTick*10;
+
+                                        decimals++;
+
+                                        if (minTick > 1)
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    while (true)
+                                    {
+                                        if (order.Price%Convert.ToDecimal(contractIb.MinTick) != 0)
+                                        {
+                                            string minusVal = "0.";
+
+                                            for (int i = 0; i < decimals-1; i++)
+                                            {
+                                                minusVal += "0";
+                                            }
+                                            minusVal += "1";
+                                            order.Price -= Convert.ToDecimal(minusVal, new CultureInfo("en-US"));
+                                        }
+                                        else
+                                        {
+                                            break;
+                                        }
+                                    }
+                                }
+
 
                                 _ibClient.ExecuteOrder(order, contractIb);
                             }
@@ -1725,7 +1818,7 @@ namespace OsEngine.Market.Servers.InteractivBrokers
         /// <summary>
         /// объём ордера родителя в момент выставления моего трейда
         /// </summary>
-        public int FillOrderToCreateMyTrade;
+        public decimal FillOrderToCreateMyTrade;
 
     }
 

@@ -46,12 +46,13 @@ namespace OsEngine.OsTrader
         /// <param name="tabPanel">панель с роботами</param>
         /// <param name="tabBotTab">панель робота с вкладками инструментов</param>
         /// <param name="textBoxLimitPrice">текстБокс с ценой лимитника при вводе заявки</param>
+        /// <param name="gridChartControlPanel">грид для панели управления чартом</param>
         public OsTraderMaster(WindowsFormsHost hostChart, WindowsFormsHost hostGlass, WindowsFormsHost hostOpenDeals,
             WindowsFormsHost hostCloseDeals, WindowsFormsHost hostAllDeals, WindowsFormsHost hostLogBot, WindowsFormsHost hostLogPrime, Rectangle rectangleAroundChart, WindowsFormsHost hostAlerts,
-            TabControl tabPanel, TabControl tabBotTab,TextBox textBoxLimitPrice)
+            TabControl tabPanel, TabControl tabBotTab, TextBox textBoxLimitPrice, Grid gridChartControlPanel)
         {
             NumberGen.GetNumberOrder();
-            if (ServerMaster.IsTester)
+            if (ServerMaster.StartProgram == ServerStartProgramm.IsTester)
             {
                 _typeWorkKeeper = ConnectorWorkType.Tester;
                 ((TesterServer)ServerMaster.GetServers()[0]).TestingStartEvent += StrategyKeeper_TestingStartEvent;
@@ -59,7 +60,7 @@ namespace OsEngine.OsTrader
                 ((TesterServer)ServerMaster.GetServers()[0]).TestingEndEvent += StrategyKeeper_TestingEndEvent;
             }
 
-            if (!ServerMaster.IsTester)
+            if (ServerMaster.StartProgram != ServerStartProgramm.IsTester)
             {
                 ServerMaster.Activate();
             }
@@ -81,6 +82,7 @@ namespace OsEngine.OsTrader
             _hostboxLog = hostLogBot;
             _rectangleAroundChart = rectangleAroundChart;
             _hostAlerts = hostAlerts;
+            _gridChartControlPanel = gridChartControlPanel;
 
             _tabBotNames = tabPanel;
             _tabBotNames.Items.Clear();
@@ -95,6 +97,8 @@ namespace OsEngine.OsTrader
             _log.StartPaint(hostLogPrime);
             _log.Listen(this);
             _hostLogPrime = hostLogPrime;
+
+            SendNewLogMessage("Запуск OsTraderMaster. Включение программы.",LogMessageType.User);
 
             Load();
             _tabBotNames.SelectionChanged += _tabBotControl_SelectionChanged;
@@ -115,6 +119,7 @@ namespace OsEngine.OsTrader
         private TabControl _tabBotTab;
         private ConnectorWorkType _typeWorkKeeper;
         private TextBox _textBoxLimitPrice;
+        private Grid _gridChartControlPanel;
 
         /// <summary>
         /// массив роботов
@@ -166,14 +171,23 @@ namespace OsEngine.OsTrader
                 while (!reader.EndOfStream)
                 {
                     string[] names = reader.ReadLine().Split('@');
-                    _panelsArray.Add(PanelCreator.GetStrategyForName(names[1],names[0]));
-                    _tabBotNames.Items.Add(_panelsArray[botIterator].NameStrategyUniq);
-                    SendNewLogMessage("Создан новый бот " + _panelsArray[botIterator].NameStrategyUniq, LogMessageType.System);
-                    botIterator++;
+                    BotPanel bot = PanelCreator.GetStrategyForName(names[1], names[0]);
+                    if (bot != null)
+                    {
+                        _panelsArray.Add(bot);
+                        _tabBotNames.Items.Add(_panelsArray[botIterator].NameStrategyUniq);
+                        SendNewLogMessage("Создан новый бот " + _panelsArray[botIterator].NameStrategyUniq,
+                            LogMessageType.System);
+                        botIterator++;
+                    }
+
                 }
             }
-
-            ReloadActivBot(_panelsArray[0]);
+            if (_panelsArray.Count != 0)
+            {
+                ReloadActivBot(_panelsArray[0]);
+            }
+            
 
             // }
             // catch
@@ -276,7 +290,8 @@ namespace OsEngine.OsTrader
 
                 _activPanel = newActivBot;
 
-                _activPanel.StartPaint(_hostChart,_hostGlass,_hostOpenDeals,_hostCloseDeals,_hostboxLog,_rectangleAroundChart,_hostAlerts,_tabBotTab,_textBoxLimitPrice);
+                _activPanel.StartPaint(_hostChart, _hostGlass, _hostOpenDeals, _hostCloseDeals, _hostboxLog,
+                    _rectangleAroundChart, _hostAlerts, _tabBotTab, _textBoxLimitPrice, _gridChartControlPanel);
 
 
 
@@ -576,7 +591,8 @@ namespace OsEngine.OsTrader
             {
                 if (_activPanel != null)
                 {
-                    _activPanel.StartPaint(_hostChart,_hostGlass,_hostOpenDeals,_hostCloseDeals,_hostboxLog,_rectangleAroundChart,_hostAlerts,_tabBotTab,_textBoxLimitPrice);
+                    _activPanel.StartPaint(_hostChart, _hostGlass, _hostOpenDeals, _hostCloseDeals, _hostboxLog,
+                        _rectangleAroundChart, _hostAlerts, _tabBotTab, _textBoxLimitPrice, _gridChartControlPanel);
                 }
 
                 ReloadRiskJournals();
@@ -661,7 +677,8 @@ namespace OsEngine.OsTrader
 
                     if (_activPanel != null)
                     {
-                        _activPanel.StartPaint(_hostChart, _hostGlass, _hostOpenDeals, _hostCloseDeals, _hostboxLog, _rectangleAroundChart, _hostAlerts, _tabBotTab, _textBoxLimitPrice);
+                        _activPanel.StartPaint(_hostChart, _hostGlass, _hostOpenDeals, _hostCloseDeals, _hostboxLog,
+                            _rectangleAroundChart, _hostAlerts, _tabBotTab, _textBoxLimitPrice, _gridChartControlPanel);
                     }
 
                     _fastRegimeOn = false;
@@ -687,6 +704,14 @@ namespace OsEngine.OsTrader
             {
                 if (_panelsArray == null ||
                _activPanel == null)
+                {
+                    return;
+                }
+
+                AcceptDialogUi ui = new AcceptDialogUi("Вы собираетесь удалить робота. Вы уверены?");
+                ui.ShowDialog();
+
+                if (ui.UserAcceptActioin == false)
                 {
                     return;
                 }
@@ -926,10 +951,30 @@ namespace OsEngine.OsTrader
         }
 
         /// <summary>
+        /// показать окно настроек параметров для робота
+        /// </summary>
+        public void BotShowParametrsDialog()
+        {
+            try
+            {
+                if (_activPanel == null)
+                {
+                    MessageBox.Show("Операция не может быть завершена, т.к. бот не активен");
+                    return;
+                }
+                _activPanel.ShowParametrDialog();
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+        }
+
+        /// <summary>
         /// купить по маркету, для активного бота
         /// </summary>
         /// <param name="volume">объём</param>
-        public void BotBuyMarket(int volume)
+        public void BotBuyMarket(decimal volume)
         {
             try
             {
@@ -952,7 +997,7 @@ namespace OsEngine.OsTrader
         /// продать по маркету, для активного бота
         /// </summary>
         /// <param name="volume">объём</param>
-        public void BotSellMarket(int volume)
+        public void BotSellMarket(decimal volume)
         {
             try
             {
@@ -976,7 +1021,7 @@ namespace OsEngine.OsTrader
         /// </summary>
         /// <param name="volume">объём</param>
         /// <param name="price">цена</param>
-        public void BotBuyLimit(int volume,decimal price)
+        public void BotBuyLimit(decimal volume,decimal price)
         {
             try
             {
@@ -1000,7 +1045,7 @@ namespace OsEngine.OsTrader
         /// </summary>
         /// <param name="volume">объём</param>
         /// <param name="price">цена</param>
-        public void BotSellLimit(int volume,decimal price)
+        public void BotSellLimit(decimal volume,decimal price)
         {
             try
             {

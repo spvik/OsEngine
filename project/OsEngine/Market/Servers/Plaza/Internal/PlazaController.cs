@@ -1434,8 +1434,8 @@ Connection conn, Listener listener, Message msg)
                                 for (int i = 0; i < rebildDepths.Count; i++)
                                 {
                                     if (MarketDepthChangeEvent != null && rebildDepths[i] != null &&
-                                        rebildDepths[i].Asks != null && rebildDepths[i].Asks.Count != 0 &&
-                                        rebildDepths[i].Bids != null && rebildDepths[i].Bids.Count != 0)
+                                        rebildDepths[i].Bids != null && rebildDepths[i].Bids.Count != 0 &&
+                                        rebildDepths[i].Asks != null && rebildDepths[i].Asks.Count != 0)
                                     {
                                         MarketDepthChangeEvent(rebildDepths[i]);
                                     }
@@ -2063,7 +2063,7 @@ Connection conn, Listener listener, Message msg)
                             smsg["client_code"].set(clientCode);
                             smsg["type"].set(1);
                             smsg["dir"].set(dir);
-                            smsg["amount"].set(order.Volume);
+                            smsg["amount"].set(Convert.ToInt32(order.Volume));
                             smsg["price"].set(order.Price.ToString(new CultureInfo("ru-RU")));
                             smsg["ext_id"].set(order.NumberUser);
 

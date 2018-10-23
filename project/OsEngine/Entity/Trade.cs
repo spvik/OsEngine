@@ -4,6 +4,7 @@
 
 using System;
 using System.Globalization;
+using OsEngine.Market.Servers.Entity;
 
 namespace OsEngine.Entity
 {
@@ -12,10 +13,32 @@ namespace OsEngine.Entity
     /// </summary>
     public class Trade
     {
+
+// стандартная часть
+
+        /// <summary>
+        /// код инструмента по которому прошла сделка
+        /// </summary>
+        public string SecurityNameCode
+        {
+            get { return name; }
+            set
+            {
+                name = value;
+
+            }
+        }
+        private string name;
+
+        /// <summary>
+        /// номер сделки в системе
+        /// </summary>
+        public string Id;
+
         /// <summary>
         /// объём
         /// </summary>
-        public int Volume;
+        public decimal Volume;
 
         /// <summary>
         /// цена сделки
@@ -37,26 +60,30 @@ namespace OsEngine.Entity
         /// </summary>
         public Side Side;
 
+// новая часть. Эту часть с финама не скачать. Её можно добыть OsData, только из стандартных коннекторов
+
         /// <summary>
-        /// код инструмента по которому прошла сделка
+        /// лучшая продажа в стакане, на момент когда пришёл этот трейд
         /// </summary>
-        public string SecurityNameCode
-        {
-            get { return name; }
-            set
-            {
-                name = value;
+        public decimal Bid;
 
-            }
-        }
-
-        private string name;
         /// <summary>
-        /// номер сделки в системе
+        /// лучшая покупка в стакане, на момент когда пришёл этот трейд
         /// </summary>
-        public string Id;
+        public decimal Ask;
 
-        private string _saveString;
+        /// <summary>
+        /// суммарный объём в продажах в стакане, на момент когда пришёл этот трейд
+        /// </summary>
+        public int BidsVolume;
+
+        /// <summary>
+        /// суммарный объём в покупках в стакане, на момент когда пришёл этот трейд
+        /// </summary>
+        public int AsksVolume;
+
+//сохранение / загрузка тика
+
         /// <summary>
         /// взять строку для сохранения
         /// </summary>
@@ -65,20 +92,27 @@ namespace OsEngine.Entity
         {
             //20150401,100000,86160.000000000,2
             // либо 20150401,100000,86160.000000000,2, Buy/Sell
-            if (!string.IsNullOrWhiteSpace(_saveString))
-            {
-                return _saveString;
-            }
-
             string result = "";
             result += Time.ToString("yyyyMMdd,HHmmss") + ",";
-            result += Price.ToString(new CultureInfo("en-US")) + ",";
-            result += Volume + ",";
+            result += Price.ToString(CultureInfo.InvariantCulture) + ",";
+            result += Volume.ToString(CultureInfo.InvariantCulture) + ",";
             result += Side + ",";
-            result += MicroSeconds;
+            result += MicroSeconds + ",";
+            result += Id;
 
-            _saveString = result;
-            return _saveString;
+            if (Bid != 0 && Ask != 0 &&
+                BidsVolume != 0 && AsksVolume != 0)
+            {
+                result += ",";
+
+                result += Bid + ",";
+                result += Ask + ",";
+                result += BidsVolume + ",";
+                result += AsksVolume;
+                
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -89,8 +123,6 @@ namespace OsEngine.Entity
         {
             //20150401,100000,86160.000000000,2
             // либо 20150401,100000,86160.000000000,2, Buy/Sell
-
-            _saveString = In;
 
             string[] sIn = In.Split(',');
 
@@ -104,9 +136,9 @@ namespace OsEngine.Entity
 
             Time = new DateTime(year, month, day, hour, minute, second);
 
-            Price = Convert.ToDecimal(sIn[2].Replace(".",","));
-            
-            Volume = Convert.ToInt32(sIn[3]);
+            Price = Convert.ToDecimal(sIn[2].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+
+            Volume = Convert.ToDecimal(sIn[3].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
 
             if (sIn.Length > 4)
             {
@@ -118,7 +150,18 @@ namespace OsEngine.Entity
                 MicroSeconds = Convert.ToInt32(sIn[5]);
             }
 
-        }
+            if (sIn.Length > 6)
+            {
+                Id = sIn[6];
+            }
 
+            if (sIn.Length > 7)
+            {
+                Bid = Convert.ToDecimal(sIn[7].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+                Ask = Convert.ToDecimal(sIn[8].Replace(",", CultureInfo.InvariantCulture.NumberFormat.NumberDecimalSeparator), CultureInfo.InvariantCulture);
+                BidsVolume = Convert.ToInt32(sIn[9]);
+                AsksVolume = Convert.ToInt32(sIn[10]);
+            }
+        }
     }
 }

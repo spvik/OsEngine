@@ -39,10 +39,14 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
         /// <summary>
         /// конструктор без параметров. Индикатор не будет сохраняться
+        /// используется ТОЛЬКО для создания составных индикаторов
+        /// не используйте его из слоя создания роботов!
         /// </summary>
         /// <param name="canDelete">можно ли пользователю удалить индикатор с графика вручную</param>
         public Rvi(bool canDelete)
         {
+            Name = Guid.NewGuid().ToString();
+
             TypeIndicator = IndicatorOneCandleChartType.Line;
             Period = 4;
             ColorUp = Color.DarkRed;
@@ -231,12 +235,25 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
             if (ui.IsChange && _myCandles != null)
             {
-                ProcessAll(_myCandles);
+                Reload();
+            }
+        }
 
-                if (NeadToReloadEvent != null)
-                {
-                    NeadToReloadEvent(this);
-                }
+        /// <summary>
+        /// перезагрузить индикатор
+        /// </summary>
+        public void Reload()
+        {
+            if (_myCandles == null)
+            {
+                return;
+            }
+            ProcessAll(_myCandles);
+
+
+            if (NeadToReloadEvent != null)
+            {
+                NeadToReloadEvent(this);
             }
         }
 
@@ -439,6 +456,11 @@ namespace OsEngine.Charts.CandleChart.Indicators
             {
                 sumMa = sumMa + _moveAverage[i];
                 sumRa = sumRa + _rangeAverage[i]; 
+            }
+
+            if (sumRa == 0 || sumMa == 0)
+            {
+                return 0;
             }
 
             return Math.Round(sumMa/sumRa,2);

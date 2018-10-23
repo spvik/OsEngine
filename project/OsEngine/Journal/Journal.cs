@@ -31,7 +31,8 @@ namespace OsEngine.Journal
             try
             {
                 _positionController = new PositionController(name);
-                _positionController.PositionChangeEvent += _dealController_DealChangeEvent;
+                _positionController.PositionStateChangeEvent += _positionController_DealStateChangeEvent;
+                _positionController.PositionNetVolumeChangeEvent += _positionController_PositionNetVolumeChangeEvent;
                 _positionController.UserSelectActionEvent += _positionController_UserSelectActionEvent;
                 _positionController.LogMessageEvent += SendNewLogMessage;
             }
@@ -40,6 +41,7 @@ namespace OsEngine.Journal
                 SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
         }
+
 
         /// <summary>
         /// имя
@@ -59,7 +61,30 @@ namespace OsEngine.Journal
             {
                 SendNewLogMessage(error.ToString(), LogMessageType.Error);
             }
-           
+        }
+
+        /// <summary>
+        /// очистить журнал от сделок
+        /// </summary>
+        public void Clear()
+        {
+            try
+            {
+                _positionController.Clear();
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+        }
+
+
+        /// <summary>
+        /// сохранить текущее состояние позиций
+        /// </summary>
+        public void Save()
+        {
+            _positionController.Save();
         }
 
 // доступ к сделкам
@@ -274,13 +299,28 @@ namespace OsEngine.Journal
         /// <summary>
         /// входящее событие: изменения сделки
         /// </summary>
-        private void _dealController_DealChangeEvent(Position position)
+        private void _positionController_DealStateChangeEvent(Position position)
         {
             try
             {
-                if (PositionChangeEvent != null)
+                if (PositionStateChangeEvent != null)
                 {
-                    PositionChangeEvent(position);
+                    PositionStateChangeEvent(position);
+                }
+            }
+            catch (Exception error)
+            {
+                SendNewLogMessage(error.ToString(), LogMessageType.Error);
+            }
+        }
+
+        void _positionController_PositionNetVolumeChangeEvent(Position position)
+        {
+            try
+            {
+                if (PositionNetVolumeChangeEvent != null)
+                {
+                    PositionNetVolumeChangeEvent(position);
                 }
             }
             catch (Exception error)
@@ -468,7 +508,7 @@ namespace OsEngine.Journal
         {
             try
             {
-                _positionController.PaintPosition(position);
+                _positionController.ProcesPosition(position);
             }
             catch (Exception error)
             {
@@ -501,9 +541,14 @@ namespace OsEngine.Journal
 // события исходящие
 
         /// <summary>
-        /// изменилась сделка
+        /// изменился статус сделки
         /// </summary>
-        public event Action<Position> PositionChangeEvent;
+        public event Action<Position> PositionStateChangeEvent;
+
+        /// <summary>
+        /// изменился открытый объём по сделке
+        /// </summary>
+        public event Action<Position> PositionNetVolumeChangeEvent;
 
         /// <summary>
         /// пользователь выбрал во всплывающем меню некое действие

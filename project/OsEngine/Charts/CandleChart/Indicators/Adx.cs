@@ -34,10 +34,14 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
         /// <summary>
         /// индикатор без параметнов. Не будет сохраняться
+        /// используется ТОЛЬКО для создания составных индикаторов
+        /// не используйте его из слоя создания роботов!
         /// </summary>
         /// <param name="canDelete">можно ли пользователю удалить индикатор с графика вручную</param>
         public Adx(bool canDelete)
         {
+            Name = Guid.NewGuid().ToString();
+
             Lenght = 14;
             TypeIndicator = IndicatorOneCandleChartType.Line;
             ColorBase = Color.DodgerBlue;
@@ -101,6 +105,22 @@ namespace OsEngine.Charts.CandleChart.Indicators
         /// </summary>
         public List<decimal> Values 
         { get; set; }
+
+        public List<decimal> ValuesDiPlus
+        {
+            get
+            {
+                return new List<decimal>(_sDIjPlus);
+            }
+        }
+
+        public List<decimal> ValuesDiMinus
+        {
+            get
+            {
+                return new List<decimal>(_sDIjMinus);
+            }
+        }
 
         /// <summary>
         /// уникальное имя индикатора
@@ -212,12 +232,24 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
             if (ui.IsChange && _myCandles != null)
             {
-                ProcessAll(_myCandles);
+                Reload();
+            }
+        }
 
-                if (NeadToReloadEvent != null)
-                {
-                    NeadToReloadEvent(this);
-                }
+        /// <summary>
+        /// перезагрузить индикатор
+        /// </summary>
+        public void Reload()
+        {
+            if (_myCandles == null)
+            {
+                return;
+            }
+            ProcessAll(_myCandles);
+
+            if (NeadToReloadEvent != null)
+            {
+                NeadToReloadEvent(this);
             }
         }
 
@@ -323,19 +355,20 @@ namespace OsEngine.Charts.CandleChart.Indicators
         /// </summary>
         private List<decimal> _trueRange;
 
-        private List<decimal> _trueRangeAverage; 
+        private List<decimal> _trueRangeAverage;
 
         /// <summary>
         /// движение, через истинный диапазон за свечку
         /// </summary>
         private List<decimal> _sDIjPlus;
+        
 
         /// <summary>
         /// движение через истинный диапазон за свечку
         /// </summary>
         private List<decimal> _sDIjMinus;
 
-// 2 часть. Рассчёт АДХ наконецто...
+        // 2 часть. Рассчёт АДХ наконецто...
 
         private List<decimal> _dX;
 

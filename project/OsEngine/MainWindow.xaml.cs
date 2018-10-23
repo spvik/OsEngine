@@ -5,13 +5,18 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using OsEngine.Alerts;
+using OsEngine.Market.Servers;
 using OsEngine.OsConverter;
 using OsEngine.OsData;
+using OsEngine.OsMiner;
+using OsEngine.OsOptimizer;
 using OsEngine.OsTrader.Gui;
 
 namespace OsEngine
@@ -22,7 +27,21 @@ namespace OsEngine
     /// </summary>
     public partial class MainWindow
     {
-        public MainWindow() // конструктор окна
+
+        private static MainWindow _window;
+
+        public static Dispatcher GetDispatcher
+        {
+            get { return _window.Dispatcher; }
+        }
+
+        /// <summary>
+        /// работает ли приложение или закрывается
+        /// </summary>
+        public static bool ProccesIsWorked;
+
+
+        public MainWindow()
         {
             Process ps = Process.GetCurrentProcess();
             ps.PriorityClass = ProcessPriorityClass.RealTime;
@@ -30,7 +49,7 @@ namespace OsEngine
             Thread.CurrentThread.CurrentCulture = new CultureInfo("ru-RU");
             InitializeComponent();
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
-            
+
             try
             {
                 int winVersion = Environment.OSVersion.Version.Major;
@@ -55,6 +74,7 @@ namespace OsEngine
             AlertMessageManager.TextBoxFromStaThread = new TextBox();
 
             ProccesIsWorked = true;
+            _window = this;
         }
 
         /// <summary>
@@ -64,9 +84,9 @@ namespace OsEngine
         {
             using (RegistryKey ndpKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32).OpenSubKey("SOFTWARE\\Microsoft\\NET Framework Setup\\NDP\\v4\\Full\\"))
             {
-                if(ndpKey == null)
+                if (ndpKey == null)
                 {
-                  return false;
+                    return false;
                 }
                 int releaseKey = Convert.ToInt32(ndpKey.GetValue("Release"));
 
@@ -82,8 +102,8 @@ namespace OsEngine
                 }
                 if ((releaseKey >= 378675))
                 {
-                    MessageBox.Show("Ваша версия .Net 4.5.1 or later. Робот не будет работать в Вашей системе. С.м. в инструкции главу: Требования к Windows и .Net");
-                    return false;
+                    //"4.5.1 or later";
+                    return true;
                 }
                 if ((releaseKey >= 378389))
                 {
@@ -115,11 +135,12 @@ namespace OsEngine
             try
             {
                 Hide();
+                ServerMaster.StartProgram = ServerStartProgramm.IsTester;
                 TesterUi candleOneUi = new TesterUi();
                 candleOneUi.ShowDialog();
                 Close();
                 ProccesIsWorked = false;
-                Thread.Sleep(10000);
+                Thread.Sleep(5000);
             }
             catch (Exception error)
             {
@@ -133,11 +154,12 @@ namespace OsEngine
             try
             {
                 Hide();
+                ServerMaster.StartProgram = ServerStartProgramm.IsOsTrader;
                 RobotUi candleOneUi = new RobotUi();
                 candleOneUi.ShowDialog();
                 Close();
                 ProccesIsWorked = false;
-                Thread.Sleep(10000);
+                Thread.Sleep(5000);
             }
             catch (Exception error)
             {
@@ -151,7 +173,27 @@ namespace OsEngine
             try
             {
                 Hide();
+                ServerMaster.StartProgram = ServerStartProgramm.IsOsData;
                 OsDataUi ui = new OsDataUi();
+                ui.ShowDialog();
+                Close();
+                ProccesIsWorked = false;
+                Thread.Sleep(5000);
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show(error.ToString());
+            }
+            Process.GetCurrentProcess().Kill();
+        }
+
+        private void ButtonConverter_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Hide();
+                ServerMaster.StartProgram = ServerStartProgramm.IsOsConverter;
+                OsConverterUi ui = new OsConverterUi();
                 ui.ShowDialog();
                 Close();
                 ProccesIsWorked = false;
@@ -164,17 +206,32 @@ namespace OsEngine
             Process.GetCurrentProcess().Kill();
         }
 
-        /// <summary>
-        /// работает ли приложение или закрывается
-        /// </summary>
-        public static bool ProccesIsWorked;
-
-        private void ButtonConverter_Click(object sender, RoutedEventArgs e)
+        private void ButtonOptimizer_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 Hide();
-                OsConverterUi ui = new OsConverterUi();
+                ServerMaster.StartProgram = ServerStartProgramm.IsOsOptimizer;
+                OptimizerUi ui = new OptimizerUi();
+                ui.ShowDialog();
+                Close();
+                ProccesIsWorked = false;
+                Thread.Sleep(10000);
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show(error.ToString());
+            }
+            Process.GetCurrentProcess().Kill();
+        }
+
+        private void ButtonMiner_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Hide();
+                ServerMaster.StartProgram = ServerStartProgramm.IsOsMiner;
+                OsMinerUi ui = new OsMinerUi();
                 ui.ShowDialog();
                 Close();
                 ProccesIsWorked = false;

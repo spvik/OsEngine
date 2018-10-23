@@ -1,18 +1,21 @@
 ﻿/*
- *Ваши права на использование кода регулируются данной лицензией http://o-s-a.net/doc/license_simple_engine.pdf
+*Ваши права на использование кода регулируются данной лицензией http://o-s-a.net/doc/license_simple_engine.pdf
 */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Media;
 using System.Threading;
 using System.Windows.Forms;
 using System.Windows.Forms.Integration;
 using OsEngine.Market.Servers;
+using OsEngine.Market.Servers.Optimizer;
 using OsEngine.OsConverter;
 using OsEngine.OsData;
+using OsEngine.OsMiner;
+using OsEngine.OsOptimizer;
 using OsEngine.OsTrader;
 using OsEngine.OsTrader.Panels;
 
@@ -23,6 +26,64 @@ namespace OsEngine.Logging
     /// </summary>
     public class Log
     {
+
+        // статическая часть с работой потока сохраняющего логи
+
+        /// <summary>
+        /// поток 
+        /// </summary>
+        public static Thread Watcher;
+
+        /// <summary>
+        /// логи которые нужно обслуживать
+        /// </summary>
+        public static List<Log> LogsToCheck = new List<Log>();
+
+        private static object _activatorLocker = new object();
+
+        /// <summary>
+        /// активировать поток для сохранения
+        /// </summary>
+        public static void Activate()
+        {
+            lock (_activatorLocker)
+            {
+                if (Watcher != null)
+                {
+                    return;
+                }
+
+                Watcher = new Thread(WatcherHome);
+                Watcher.Name = "LogSaveThread";
+                Watcher.IsBackground = true;
+                Watcher.Start();
+            }
+        }
+
+        /// <summary>
+        /// место работы потока который сохраняет логи
+        /// </summary>
+        public static void WatcherHome()
+        {
+            while (true)
+            {
+                Thread.Sleep(2000);
+
+                for (int i = 0; i < LogsToCheck.Count; i++)
+                {
+                    LogsToCheck[i].TrySaveLog();
+                    LogsToCheck[i].TryPaintLog();
+                }
+
+                if (!MainWindow.ProccesIsWorked)
+                {
+                    return;
+                }
+            }
+        }
+
+        // объект лога
+
         /// <summary>
         /// конструктор
         /// </summary>
@@ -31,10 +92,12 @@ namespace OsEngine.Logging
         {
             _uniqName = uniqName;
 
-            Thread saver = new Thread(SaverArea);
-            saver.IsBackground = true;
-            saver.CurrentCulture = new CultureInfo("RU-ru");
-            saver.Start();
+            if (Watcher == null)
+            {
+                Activate();
+            }
+
+            LogsToCheck.Add(this);
 
             _grid = new DataGridView();
 
@@ -87,6 +150,38 @@ namespace OsEngine.Logging
         }
 
         /// <summary>
+        /// удалить объект и очистить все файлы связанные с ним
+        /// </summary>
+        public void Delete()
+        {
+            for (int i = 0; i < LogsToCheck.Count; i++)
+            {
+                if (LogsToCheck[i]._uniqName == this._uniqName)
+                {
+                    LogsToCheck.RemoveAt(i);
+                    break;
+                }
+            }
+            _isDelete = true;
+
+            string date = DateTime.Now.Year + "_" + DateTime.Now.Month + "_" + DateTime.Now.Day;
+
+            if (File.Exists(@"Engine\Log\" + _uniqName + @"Log_" + date + ".txt"))
+            {
+                File.Delete(@"Engine\Log\" + _uniqName + @"Log_" + date + ".txt");
+            }
+
+            _grid = null;
+
+            _messageses = null;
+        }
+
+        /// <summary>
+        /// уничтожен ли объект
+        /// </summary>
+        private bool _isDelete;
+
+        /// <summary>
         /// имя
         /// </summary>
         private string _uniqName;
@@ -97,7 +192,24 @@ namespace OsEngine.Logging
         /// <param name="server">сервер</param>
         public void Listen(IServer server)
         {
-            server.LogMessageEvent += LogMessageEvent;
+            server.LogMessageEvent += ProcessMessage;
+        }
+
+        /// <summary>
+        /// начать прослушку сервера майнера
+        /// </summary>
+        public void Listen(OsMinerServer server)
+        {
+            server.LogMessageEvent += ProcessMessage;
+        }
+
+        /// <summary>
+        /// начать прослушку оптимизатора
+        /// </summary>
+        /// <param name="optimizer">оптимизатор</param>
+        public void Listen(OptimizerMaster optimizer)
+        {
+            optimizer.LogMessageEvent += ProcessMessage;
         }
 
         /// <summary>
@@ -106,7 +218,25 @@ namespace OsEngine.Logging
         /// <param name="master"></param>
         public void Listen(OsDataMaster master)
         {
-            master.NewLogMessageEvent += LogMessageEvent;
+            master.NewLogMessageEvent += ProcessMessage;
+        }
+
+        /// <summary>
+        /// начать прослушку OsData
+        /// </summary>
+        /// <param name="master"></param>
+        public void Listen(OsMinerMaster master)
+        {
+            master.LogMessageEvent += ProcessMessage;
+        }
+
+
+        /// <summary>
+        /// начать прослушку хранилища оптимизатора
+        /// </summary>
+        public void Listen(OptimizerDataStorage panel)
+        {
+            panel.LogMessageEvent += ProcessMessage;
         }
 
         /// <summary>
@@ -114,7 +244,7 @@ namespace OsEngine.Logging
         /// </summary>
         public void Listen(BotPanel panel)
         {
-            panel.LogMessageEvent += LogMessageEvent;
+            panel.LogMessageEvent += ProcessMessage;
         }
 
         /// <summary>
@@ -122,7 +252,7 @@ namespace OsEngine.Logging
         /// </summary>
         public void Listen(OsTraderMaster master)
         {
-            master.LogMessageEvent += LogMessageEvent;
+            master.LogMessageEvent += ProcessMessage;
         }
 
         /// <summary>
@@ -130,7 +260,7 @@ namespace OsEngine.Logging
         /// </summary>
         public void Listen(OsConverterMaster master)
         {
-            master.LogMessageEvent += LogMessageEvent;
+            master.LogMessageEvent += ProcessMessage;
         }
 
         /// <summary>
@@ -143,18 +273,36 @@ namespace OsEngine.Logging
         /// </summary>
         private WindowsFormsHost _host;
 
+        private ConcurrentQueue<LogMessage> _incomingMessages = new ConcurrentQueue<LogMessage>();
+
         /// <summary>
         /// входящее сообщение
         /// </summary>
         /// <param name="message">сообщение</param>
         /// <param name="type">тип сообщения</param>
-        void LogMessageEvent(string message, LogMessageType type)
+        private void ProcessMessage(string message, LogMessageType type)
+        {
+            if (_isDelete)
+            {
+                return;
+            }
+
+            LogMessage messageLog = new LogMessage { Message = message, Time = DateTime.Now, Type = type };
+            _incomingMessages.Enqueue(messageLog);
+
+            if (messageLog.Type == LogMessageType.Error)
+            {
+                SetNewErrorMessage(messageLog);
+            }
+        }
+
+        private void PaintMessage(LogMessage messageLog)
         {
             try
             {
                 if (_grid.InvokeRequired)
                 {
-                    _grid.Invoke(new Action<string, LogMessageType>(LogMessageEvent), message, type);
+                    _grid.Invoke(new Action<LogMessage>(PaintMessage), messageLog);
                     return;
                 }
 
@@ -162,8 +310,10 @@ namespace OsEngine.Logging
                 {
                     _messageses = new List<LogMessage>();
                 }
-                LogMessage messageLog = new LogMessage {Message = message, Time = DateTime.Now, Type = type};
+
                 _messageses.Add(messageLog);
+
+                _messageSender.AddNewMessage(messageLog);
 
                 DataGridViewRow row = new DataGridViewRow();
                 row.Cells.Add(new DataGridViewTextBoxCell());
@@ -174,85 +324,91 @@ namespace OsEngine.Logging
 
                 row.Cells.Add(new DataGridViewTextBoxCell());
                 row.Cells[2].Value = messageLog.Message;
-                _grid.Rows.Insert(0,row);
-
-                _messageSender.AddNewMessage(messageLog);
-
-                if (type == LogMessageType.Error)
-                {
-                    SetNewErrorMessage(message);
-                }
+                _grid.Rows.Insert(0, row);
 
             }
             catch (Exception)
             {
-                 // ignore
+                // ignore
             }
         }
 
- // сохранение сообщений      
+        private void TryPaintLog()
+        {
+            if (_host != null && !_incomingMessages.IsEmpty)
+            {
+                List<LogMessage> elements = new List<LogMessage>();
+
+                while (!_incomingMessages.IsEmpty)
+                {
+                    LogMessage newElement;
+                    _incomingMessages.TryDequeue(out newElement);
+
+                    if (newElement != null)
+                    {
+                        elements.Add(newElement);
+                    }
+                }
+
+                for (int i = 0; i < elements.Count; i++)
+                {
+                    PaintMessage(elements[i]);
+                }
+            }
+        }
+
+        // сохранение сообщений      
 
         /// <summary>
         /// все сообщения лога
         /// </summary>
         private List<LogMessage> _messageses;
 
-        private int _lastAreaCount = 0;
+        private int _lastAreaCount;
 
         /// <summary>
         /// метод в котором работает поток который сохранит
         /// лог когда приложение начнёт закрыаться
         /// </summary>
-        public void SaverArea()
+        public void TrySaveLog()
         {
             if (!Directory.Exists(@"Engine\Log\"))
             {
                 Directory.CreateDirectory(@"Engine\Log\");
             }
 
-            while (true)
+
+            try
             {
-                Thread.Sleep(1000);
-                if (MainWindow.ProccesIsWorked == true)
-                {
-                    try
-                    {
-                        if (_messageses == null ||
-                            _lastAreaCount == _messageses.Count)
-                        {
-                            continue;
-                        }
-
-                        string date = DateTime.Now.Year + "_" + DateTime.Now.Month + "_" + DateTime.Now.Day;
-
-
-
-                        using (
-                            StreamWriter writer = new StreamWriter(
-                                @"Engine\Log\" + _uniqName + @"Log_" + date + ".txt", true))
-                        {
-                            string str = "";
-                            for (int i = _lastAreaCount; _messageses != null && i < _messageses.Count; i++)
-                            {
-                                str += _messageses[i].GetString() + "\r\n";
-                            }
-                            writer.Write(str);
-                        }
-                        _lastAreaCount = _messageses.Count;
-                    }
-                    catch (Exception)
-                    {
-                        // ignore
-                    }
-                }
-                else
+                if (_messageses == null ||
+                    _lastAreaCount == _messageses.Count)
                 {
                     return;
                 }
+
+                string date = DateTime.Now.Year + "_" + DateTime.Now.Month + "_" + DateTime.Now.Day;
+
+                using (
+                    StreamWriter writer = new StreamWriter(
+                        @"Engine\Log\" + _uniqName + @"Log_" + date + ".txt", true))
+                {
+                    string str = "";
+                    for (int i = _lastAreaCount; _messageses != null && i < _messageses.Count; i++)
+                    {
+                        str += _messageses[i].GetString() + "\r\n";
+                    }
+                    writer.Write(str);
+                }
+                _lastAreaCount = _messageses.Count;
             }
+            catch (Exception)
+            {
+                // ignore
+            }
+
         }
 
-// рассылка
+        // рассылка
 
         /// <summary>
         /// объект рассылающий сообщения
@@ -267,7 +423,7 @@ namespace OsEngine.Logging
             _messageSender.ShowDialog();
         }
 
-// прорисовка
+        // прорисовка
 
         /// <summary>
         /// начать прорисовку объекта
@@ -277,7 +433,7 @@ namespace OsEngine.Logging
             _host = host;
             if (!_host.CheckAccess())
             {
-                _host.Dispatcher.Invoke(new Action<WindowsFormsHost>(StartPaint),host);
+                _host.Dispatcher.Invoke(new Action<WindowsFormsHost>(StartPaint), host);
                 return;
             }
 
@@ -306,7 +462,7 @@ namespace OsEngine.Logging
         }
 
 
-// общий лог для ошибок
+        // общий лог для ошибок
 
         /// <summary>
         /// таблица для прорисовки сообщений с ошибками
@@ -376,11 +532,11 @@ namespace OsEngine.Logging
         /// <summary>
         /// выслать новое сообщение об ошибке
         /// </summary>
-        private static void SetNewErrorMessage(string message)
+        private static void SetNewErrorMessage(LogMessage message)
         {
-            if (_gridErrorLog.InvokeRequired)
+            if (!MainWindow.GetDispatcher.CheckAccess())
             {
-                _gridErrorLog.Invoke(new Action<string>(SetNewErrorMessage), message);
+                MainWindow.GetDispatcher.Invoke(new Action<LogMessage>(SetNewErrorMessage), message);
                 return;
             }
 
@@ -392,7 +548,7 @@ namespace OsEngine.Logging
             row.Cells[1].Value = LogMessageType.Error;
 
             row.Cells.Add(new DataGridViewTextBoxCell());
-            row.Cells[2].Value = message;
+            row.Cells[2].Value = message.Message;
             _gridErrorLog.Rows.Insert(0, row);
 
             if (_logErrorUi == null)

@@ -10,7 +10,6 @@ using OsEngine.Market.Servers;
 
 namespace OsEngine.OsData
 {
-
     /// <summary>
     /// Логика взаимодействия для OsDataSetUi.xaml
     /// </summary>
@@ -20,6 +19,11 @@ namespace OsEngine.OsData
         /// сет принадлежащий этому окну
         /// </summary>
         private OsDataSet _set;
+
+        /// <summary>
+        /// сохранён ли сет
+        /// </summary>
+        public bool IsSaved;
 
         /// <summary>
         /// конструктор
@@ -40,8 +44,6 @@ namespace OsEngine.OsData
             }
 
             TextBoxFolderName.Text = set.SetName.Split('_')[1];
-
-            Closed += OsDataSetUi_Closed;
 
             ComboBoxRegime.Items.Add(DataSetState.Off);
             ComboBoxRegime.Items.Add(DataSetState.On);
@@ -69,19 +71,24 @@ namespace OsEngine.OsData
             CheckBoxNeadToLoadDataInServers.IsChecked = set.NeadToLoadDataInServers;
 
             ComboBoxSource.Items.Add(ServerType.Unknown);
+            ComboBoxSource.Items.Add(ServerType.Finam);
             ComboBoxSource.Items.Add(ServerType.InteractivBrokers);
             ComboBoxSource.Items.Add(ServerType.Plaza);
-            ComboBoxSource.Items.Add(ServerType.Quik);
-            ComboBoxSource.Items.Add(ServerType.SmartCom);
-            ComboBoxSource.Items.Add(ServerType.Finam);
+            ComboBoxSource.Items.Add(ServerType.QuikDde);
+            ComboBoxSource.Items.Add(ServerType.QuikLua);
+            ComboBoxSource.Items.Add(ServerType.BitMex);
+            ComboBoxSource.Items.Add(ServerType.Kraken);
+            ComboBoxSource.Items.Add(ServerType.Binance);
+            ComboBoxSource.Items.Add(ServerType.BitStamp);
+            ComboBoxSource.Items.Add(ServerType.NinjaTrader);
 
             ComboBoxSource.SelectedItem = _set.Source;
             ComboBoxSource.SelectionChanged += ComboBoxSource_SelectionChanged;
             DatePickerTimeStart.SelectedDate = _set.TimeStart;
             DatePickerTimeEnd.SelectedDate = _set.TimeEnd;
 
-            ComboBoxCandleCreateType.Items.Add(CandleSeriesCreateDataType.Tick);
-            ComboBoxCandleCreateType.Items.Add(CandleSeriesCreateDataType.MarketDepth);
+            ComboBoxCandleCreateType.Items.Add(CandleMarketDataType.Tick);
+            ComboBoxCandleCreateType.Items.Add(CandleMarketDataType.MarketDepth);
             ComboBoxCandleCreateType.SelectedItem = _set.CandleCreateType;
 
             CheckBoxNeadToUpDate.IsChecked = _set.NeadToUpdate;
@@ -109,6 +116,7 @@ namespace OsEngine.OsData
         /// </summary>
         void ComboBoxSource_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            SaveSettings();
             CheckButtons();
         }
 
@@ -117,7 +125,6 @@ namespace OsEngine.OsData
         /// </summary>
         void ComboBoxRegime_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
-            SaveSettings();
             CheckButtons();
         }
 
@@ -239,14 +246,6 @@ namespace OsEngine.OsData
         }
 
         /// <summary>
-        /// окно закрывается
-        /// </summary>
-        void OsDataSetUi_Closed(object sender, EventArgs e)
-        {
-            SaveSettings();
-        }
-
-        /// <summary>
         /// сохранить настройки
         /// </summary>
         private void SaveSettings()
@@ -340,14 +339,13 @@ namespace OsEngine.OsData
         private void ReloadSecuritiesOnTable()
         {
             _grid.Rows.Clear();
-            List<string> names = _set.SecuritiesNames;
+            List<SecurityToLoad> names = _set.SecuritiesNames;
 
             for (int i = 0;names != null &&  i < names.Count; i++)
             {
                 DataGridViewRow row = new DataGridViewRow();
                 row.Cells.Add(new DataGridViewTextBoxCell());
-                row.Cells[0].Value = names[i];
-
+                row.Cells[0].Value = names[i].Name;
                 _grid.Rows.Insert(0, row);
             }
         }
@@ -357,7 +355,6 @@ namespace OsEngine.OsData
         /// </summary>
         private void ButtonAddSecurity_Click(object sender, System.Windows.RoutedEventArgs e)
         {
-            SaveSettings();
             _set.AddNewSecurity();
             ReloadSecuritiesOnTable();
         }
@@ -367,13 +364,26 @@ namespace OsEngine.OsData
         /// </summary>
         private void ButtonDelSecurity_Click(object sender, System.Windows.RoutedEventArgs e)
         {
-            SaveSettings();
             if (_grid.CurrentCell == null)
             {
                 return;
             }
             _set.DeleteSecurity(_grid.Rows.Count -1 -_grid.CurrentCell.RowIndex);
             ReloadSecuritiesOnTable();
+        }
+
+        private void ButtonAccept_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            if (TextBoxFolderName.Text == "")
+            {
+                MessageBox.Show(@"Сохранение прервано. Сету необходимо задать имя");
+                return;
+            }
+
+            SaveSettings();
+
+            IsSaved = true;
+            Close();
         }
     }
 }

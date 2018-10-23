@@ -118,7 +118,7 @@ namespace OsEngine.OsData
         /// <summary>
         /// тип создания свечек - из стакана или из тиков
         /// </summary>
-        public CandleSeriesCreateDataType CandleCreateType;
+        public CandleMarketDataType CandleCreateType;
 
         /// <summary>
         /// уникальное имя сета
@@ -143,7 +143,7 @@ namespace OsEngine.OsData
         /// <summary>
         /// имена бумаг на которые мы подписаны
         /// </summary>
-        public List<string> SecuritiesNames;
+        public List<SecurityToLoad> SecuritiesNames;
 
         /// <summary>
         /// нужно ли обновлять данные автоматически
@@ -164,26 +164,26 @@ namespace OsEngine.OsData
         {
             SetName = nameUniq;
             _regime = DataSetState.Off;
-            Tf1SecondIsOn = true;
-            Tf2SecondIsOn = true;
-            Tf5SecondIsOn = true;
-            Tf10SecondIsOn = true;
-            Tf15SecondIsOn = true;
-            Tf20SecondIsOn = true;
-            Tf30SecondIsOn = true;
-            Tf1MinuteIsOn = true;
-            Tf2MinuteIsOn = true;
+            Tf1SecondIsOn = false;
+            Tf2SecondIsOn = false;
+            Tf5SecondIsOn = false;
+            Tf10SecondIsOn = false;
+            Tf15SecondIsOn = false;
+            Tf20SecondIsOn = false;
+            Tf30SecondIsOn = false;
+            Tf1MinuteIsOn = false;
+            Tf2MinuteIsOn = false;
             Tf5MinuteIsOn = true;
-            Tf10MinuteIsOn = true;
-            Tf15MinuteIsOn = true;
+            Tf10MinuteIsOn = false;
+            Tf15MinuteIsOn = false;
             Tf30MinuteIsOn = true;
-            Tf1HourIsOn = true;
-            Tf2HourIsOn = true;
-            TfTickIsOn = true;
-            TfMarketDepthIsOn = true;
+            Tf1HourIsOn = false;
+            Tf2HourIsOn = false;
+            TfTickIsOn = false;
+            TfMarketDepthIsOn = false;
             Source = ServerType.Unknown;
-            SecuritiesNames = new List<string>();
-            TimeStart = DateTime.Now;
+            SecuritiesNames = new List<SecurityToLoad>();
+            TimeStart = DateTime.Now.AddDays(-5);
             TimeEnd = DateTime.Now.AddDays(5);
             MarketDepthDepth = 5;
 
@@ -209,6 +209,11 @@ namespace OsEngine.OsData
         {
             try
             {
+                if (SetName == "Set_")
+                {
+                    return;
+                }
+
                 if (!Directory.Exists("Data\\" + SetName))
                 {
                     Directory.CreateDirectory("Data\\" + SetName);
@@ -245,7 +250,7 @@ namespace OsEngine.OsData
 
                     for (int i = 0; SecuritiesNames != null && i < SecuritiesNames.Count; i++)
                     {
-                        securities += SecuritiesNames[i] + "*";
+                        securities += SecuritiesNames[i].GetSaveStr() + "@";
                     }
 
                     writer.WriteLine(securities);
@@ -302,12 +307,12 @@ namespace OsEngine.OsData
                     Enum.TryParse(reader.ReadLine(), out _selectedTf);
                     _selectedSecurity = reader.ReadLine();
 
-                    string[] securities = reader.ReadLine().Split('*');
+                    string[] securities = reader.ReadLine().Split('@');
 
-                    if (securities.Length != 0)
+                    for (int i = 0; i < securities.Length-1; i++)
                     {
-                        SecuritiesNames = securities.ToList();
-                        SecuritiesNames.RemoveAt(SecuritiesNames.Count - 1);
+                        SecuritiesNames.Add(new SecurityToLoad());
+                        SecuritiesNames[SecuritiesNames.Count - 1].Load(securities[i]);
                     }
 
                     Enum.TryParse(reader.ReadLine(), out CandleCreateType);
@@ -352,11 +357,12 @@ namespace OsEngine.OsData
         /// <summary>
         /// показать окно настроек
         /// </summary>
-        public void ShowDialog()
+        public bool ShowDialog()
         {
             OsDataSetUi ui = new OsDataSetUi(this);
             ui.ShowDialog();
             ReBuildComboBox();
+            return ui.IsSaved;
         }
 
         /// <summary>
@@ -376,6 +382,11 @@ namespace OsEngine.OsData
         /// </summary>
         public void AddNewSecurity()
         {
+            if (ServerMaster.GetServers() == null)
+            {
+                return;
+            }
+
             IServer myServer = ServerMaster.GetServers().Find(server => server.ServerType == Source);
 
             if (myServer == null)
@@ -407,12 +418,16 @@ namespace OsEngine.OsData
             {
                 if (SecuritiesNames == null)
                 {
-                    SecuritiesNames = new List<string>();
+                    SecuritiesNames = new List<SecurityToLoad>();
                 }
 
-                if (SecuritiesNames.Find(s => s == ui.SelectedSecurity.Name) == null)
+               SecurityToLoad record = new SecurityToLoad();
+                record.Name = ui.SelectedSecurity.Name;
+                record.Id = ui.SelectedSecurity.NameId;
+
+                if (SecuritiesNames.Find(s => s.Id == record.Id) == null)
                 {
-                    SecuritiesNames.Add(ui.SelectedSecurity.Name);
+                    SecuritiesNames.Add(record);
                 }
             }
             Save();
@@ -433,7 +448,7 @@ namespace OsEngine.OsData
 
             for (int i = 0; _mySeries != null && i < _mySeries.Count; i++)
             {
-                if (_mySeries[i].Security.Name == SecuritiesNames[index])
+                if (_mySeries[i].Security.NameId == SecuritiesNames[index].Id)
                 {
                     _mySeries[i].Stop();
                     _mySeries.Remove(_mySeries[i]);
@@ -528,64 +543,64 @@ namespace OsEngine.OsData
             {
                 if (Tf1MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i] ,TimeFrame.Min1);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*","") ,TimeFrame.Min1);
                 }
                 if (Tf2MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i] ,TimeFrame.Min2);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Min2);
                 }
                 if (Tf5MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Min5);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Min5);
                 }
                 if (Tf10MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Min10);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Min10);
                 }
                 if (Tf15MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Min15);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Min15);
                 }
                 if (Tf30MinuteIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Min30);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Min30);
                 }
                 if (Tf1HourIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Hour1);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Hour1);
                 }
                 if (Tf2HourIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i],TimeFrame.Hour2);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Hour2);
                 }
 
                 if (Tf1SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec1);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec1);
                 }
                 if (Tf2SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec2);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec2);
                 }
                 if (Tf5SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec5);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec5);
                 }
                 if (Tf10SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec10);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec10);
                 }
                 if (Tf15SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec15);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec15);
                 }
                 if (Tf20SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec20);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec20);
                 }
                 if (Tf30SecondIsOn)
                 {
-                    LoadSetsFromFile(SecuritiesNames[i], TimeFrame.Sec30);
+                    LoadSetsFromFile(SecuritiesNames[i].Name.Replace("*", ""), TimeFrame.Sec30);
                 }
             }
         }
@@ -653,6 +668,11 @@ namespace OsEngine.OsData
             if (_myServer != null)
             {
                 _myServer.NewMarketDepthEvent -= _myServer_NewMarketDepthEvent;
+            }
+
+            if (ServerMaster.GetServers() == null)
+            {
+                return;
             }
 
             _myServer = ServerMaster.GetServers().Find(server => server.ServerType == Source);
@@ -796,8 +816,8 @@ namespace OsEngine.OsData
                 for (int i = 0; i < SecuritiesNames.Count; i++)
                 {
                     while (
-                        ((FinamServer) _myServer).StartTickToSecurity(SecuritiesNames[i], TimeStart, TimeEnd,
-                            GetActualTimeToTrade("Data\\" + SetName + "\\" + SecuritiesNames[i].Replace("/", "") + "\\Tick"), NeadToUpdate) == false)
+                        ((FinamServer) _myServer).StartTickToSecurity(SecuritiesNames[i].Id, TimeStart, TimeEnd,
+                            GetActualTimeToTrade("Data\\" + SetName + "\\" + SecuritiesNames[i].Name.Replace("/", "") + "\\Tick"), NeadToUpdate) == false)
                     {
                         Thread.Sleep(5000);
                     }
@@ -812,23 +832,22 @@ namespace OsEngine.OsData
         /// </summary>
         /// <param name="name">название бумаги</param>
         /// <param name="timeFrame">тайм фрейм</param>
-        private void StartThis(string name, TimeFrame timeFrame)
+        private void StartThis(SecurityToLoad loadSec, TimeFrame timeFrame)
         {
             CandleSeries series = null;
             while (series == null)
             {
-
                 TimeFrameBuilder timeFrameBuilder = new TimeFrameBuilder();
                 timeFrameBuilder.TimeFrame = timeFrame;
 
                 if (_myServer.ServerType == ServerType.Finam)
                 {
-                    series = ((FinamServer)_myServer).StartThisSecurity(name, timeFrameBuilder, TimeStart,
-                        TimeEnd, GetActualTimeToCandle("Data\\" + SetName + "\\" + name.Replace("/", "") + "\\" + timeFrame), NeadToUpdate);
+                    series = ((FinamServer)_myServer).StartThisSecurity(loadSec.Id, timeFrameBuilder, TimeStart,
+                        TimeEnd, GetActualTimeToCandle("Data\\" + SetName + "\\" + loadSec.Name.Replace("/", "") + "\\" + timeFrame), NeadToUpdate);
                 }
                 else
                 {
-                    series = _myServer.StartThisSecurity(name, timeFrameBuilder);
+                    series = _myServer.StartThisSecurity(loadSec.Name, timeFrameBuilder);
                 }
 
                 Thread.Sleep(10);
@@ -895,11 +914,11 @@ namespace OsEngine.OsData
 
             for (int i = 0; i < SecuritiesNames.Count; i++)
             {
-                string s = SecuritiesNames[i].Replace("/","");
+                string s = SecuritiesNames[i].Name.Replace("/","");
 
-                if (!Directory.Exists("Data\\" + SetName + "\\" + SecuritiesNames[i].Replace("/", "") ))
+                if (!Directory.Exists("Data\\" + SetName + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "")))
                 {
-                    Directory.CreateDirectory("Data\\" + SetName + "\\" + SecuritiesNames[i].Replace("/", ""));
+                    Directory.CreateDirectory("Data\\" + SetName + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*",""));
                 }
             }
 
@@ -915,7 +934,7 @@ namespace OsEngine.OsData
                 {
                     continue;
                 }
-                SaveThisCandles(candles, pathToSet + _mySeries[i].Security.Name.Replace("/", "") + "\\" + _mySeries[i].TimeFrame,
+                SaveThisCandles(candles, pathToSet + _mySeries[i].Security.Name.Replace("/", "").Replace("*", "") + "\\" + _mySeries[i].TimeFrame,
                     _mySeries[i].TimeFrame, _mySeries[i].Security.Name);
             }
 
@@ -928,7 +947,7 @@ namespace OsEngine.OsData
                 {
                     if (_myServer.ServerType != ServerType.Finam)
                     {
-                        List<Trade> trades = _myServer.GetAllTradesToSecurity(_myServer.GetSecurityForName(SecuritiesNames[i]));
+                        List<Trade> trades = _myServer.GetAllTradesToSecurity(_myServer.GetSecurityForName(SecuritiesNames[i].Name));
 
                         if (trades == null ||
                             trades.Count == 0)
@@ -936,21 +955,21 @@ namespace OsEngine.OsData
                             continue;
                         }
 
-                        string path = pathToSet + SecuritiesNames[i].Replace("/", "") ;
+                        string path = pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "");
 
                         for (int i2 = 0; i2 < trades.Count; i2++)
                         {
 
                             SaveThisTick(trades[i2],
-                                path, SecuritiesNames[i], null, path + "\\" + "Tick");
+                                path, SecuritiesNames[i].Name.Replace("*", ""), null, path + "\\" + "Tick");
                         }
                     }
                     else
                     { // Финам
-                        List<string> trades = ((FinamServer)_myServer).GetAllFilesWhithTradeToSecurity(SecuritiesNames[i]);
+                        List<string> trades = ((FinamServer)_myServer).GetAllFilesWhithTradeToSecurity(SecuritiesNames[i].Name);
 
                          SaveThisTickFromFiles(trades,
-                            pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\", SecuritiesNames[i]);
+                            pathToSet + SecuritiesNames[i].Name.Replace("*", "").Replace("/", "") + "\\" + "Tick" + "\\", SecuritiesNames[i].Name.Replace("*", ""));
 
                     }
                 }
@@ -963,7 +982,7 @@ namespace OsEngine.OsData
                 for (int i = 0; i < SecuritiesNames.Count; i++)
                 {
                     SaveThisMarketDepth(
-                        pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "MarketDepth", SecuritiesNames[i]);
+                        pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "MarketDepth", SecuritiesNames[i].Name.Replace("*", ""));
                 }
             }
 
@@ -999,26 +1018,25 @@ namespace OsEngine.OsData
                 }
 
 
-
                 for (int i = 0; i < SecuritiesNames.Count; i++)
                 {
                     if (
-                        !File.Exists(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" +
-                                     SecuritiesNames[i].Replace("/", "") + ".txt"))
+                        !File.Exists(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" +
+                                     SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt"))
                     {
                         continue;
                     }
 
-                    Security sec = _myServer.GetSecurityForName(SecuritiesNames[i]);
+                    Security sec = _myServer.GetSecurityForName(SecuritiesNames[i].Name);
 
-                    string nameSecurityToSave = sec.NameFull.Replace("'", "");
+                    string nameSecurityToSave = sec.NameFull.Replace("'", "").Replace("*", "");
 
-                    if (File.Exists(pathToSet + SecuritiesNames[i] + "\\" + "Tick" + "\\" +
+                    if (File.Exists(pathToSet + SecuritiesNames[i].Name.Replace("*", "") + "\\" + "Tick" + "\\" +
                                     nameSecurityToSave + ".txt")
                                     &&
-                         File.Exists("Data\\QuikServerTrades\\" + nameSecurityToSave + ".txt"))
+                         File.Exists("Data\\QuikServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt"))
                     {
-                        FileInfo info = new FileInfo(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + nameSecurityToSave + ".txt");
+                        FileInfo info = new FileInfo(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + nameSecurityToSave + ".txt");
 
                         FileInfo info2 = new FileInfo("Data\\QuikServerTrades\\" + nameSecurityToSave + ".txt");
 
@@ -1028,21 +1046,21 @@ namespace OsEngine.OsData
                         }
                     }
 
-                    File.Delete("Data\\QuikServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Delete("Data\\SmartComServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Delete("Data\\InteractivBrokersServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Delete("Data\\AstsBridgeServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Delete("Data\\PlazaServerTrades\\" + nameSecurityToSave + ".txt");
+                    File.Delete("Data\\QuikServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt");
+                    File.Delete("Data\\SmartComServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt");
+                    File.Delete("Data\\InteractivBrokersServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt");
+                    File.Delete("Data\\AstsBridgeServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt");
+                    File.Delete("Data\\PlazaServerTrades\\" + nameSecurityToSave.Replace("*", "") + ".txt");
 
-                    File.Copy(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Replace("/", "") + ".txt",
+                    File.Copy(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt",
                         "Data\\QuikServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Copy(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Replace("/", "") + ".txt",
+                    File.Copy(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt",
                         "Data\\SmartComServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Copy(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Replace("/", "") + ".txt",
+                    File.Copy(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt",
                         "Data\\InteractivBrokersServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Copy(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Replace("/", "") + ".txt",
+                    File.Copy(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt",
                         "Data\\AstsBridgeServerTrades\\" + nameSecurityToSave + ".txt");
-                    File.Copy(pathToSet + SecuritiesNames[i].Replace("/", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Replace("/", "") + ".txt",
+                    File.Copy(pathToSet + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + "\\" + "Tick" + "\\" + SecuritiesNames[i].Name.Replace("/", "").Replace("*", "") + ".txt",
                         "Data\\PlazaServerTrades\\" + nameSecurityToSave + ".txt");
                 }
             }
@@ -1241,7 +1259,7 @@ namespace OsEngine.OsData
 
             try
             {
-                using (StreamWriter writer = new StreamWriter(path + "\\" + securityName.Replace("/", "") + ".txt", true))
+                using (StreamWriter writer = new StreamWriter(path + "\\" + securityName.Replace("/", "").Replace("*", "") + ".txt", true))
                 {
                     for (int i = firstCandle; i < candles.Count; i++)
                     {
@@ -1352,8 +1370,6 @@ namespace OsEngine.OsData
                 }
             }
 
-            int firstCandle = 0;
-
             if (tradeSaveInfo.LastSaveObjectTime >
                 tradeLast.Time ||
                 (tradeLast.Id != null && tradeLast.Id == tradeSaveInfo.LastTradeId)
@@ -1426,7 +1442,15 @@ namespace OsEngine.OsData
 
                 if ((!reader.EndOfStream))
                 {
-                    newTrade.SetTradeFromString(reader.ReadLine());
+                    try
+                    {
+                        newTrade.SetTradeFromString(reader.ReadLine());
+                    }
+                    catch (Exception)
+                    {
+                        continue;
+                    }
+                    
                     SaveThisTick(newTrade,
                         path, securityName, null, path + securityName.Replace("/", "") + ".txt");
                 }
@@ -1831,13 +1855,13 @@ namespace OsEngine.OsData
 
                 for (int i = 0; SecuritiesNames != null && i < SecuritiesNames.Count; i++)
                 {
-                    _comboBoxSecurity.Items.Add(SecuritiesNames[i]);
+                    _comboBoxSecurity.Items.Add(SecuritiesNames[i].Name);
                 }
 
                 if (string.IsNullOrWhiteSpace(_selectedSecurity) &&
                     SecuritiesNames != null && SecuritiesNames.Count != 0)
                 {
-                    _selectedSecurity = SecuritiesNames[0];
+                    _selectedSecurity = SecuritiesNames[0].Name;
                 }
 
                 if (!string.IsNullOrWhiteSpace(_selectedSecurity))
@@ -1849,7 +1873,7 @@ namespace OsEngine.OsData
                     _comboBoxSecurity.SelectedItem.ToString() == "") &&
                     SecuritiesNames != null && SecuritiesNames.Count != 0)
                 {
-                    _selectedSecurity = SecuritiesNames[0];
+                    _selectedSecurity = SecuritiesNames[0].Name;
                     _comboBoxSecurity.SelectedItem = _selectedSecurity;
                 }
 
@@ -1892,8 +1916,7 @@ namespace OsEngine.OsData
                 {
                     return;
                 }
-                if (_selectedTf != TimeFrame.Tick &&
-                    _selectedTf != TimeFrame.Sec1 &&
+                if ( _selectedTf != TimeFrame.Sec1 &&
                     _selectedTf != TimeFrame.Sec2 &&
                     _selectedTf != TimeFrame.Sec5 &&
                     _selectedTf != TimeFrame.Sec10 &&
@@ -2016,6 +2039,10 @@ namespace OsEngine.OsData
 
                 for (int i = firstIndex; i < candles.Count; i++)
                 {
+                    if (candles[i].TimeStart == Candles[Candles.Count - 1].TimeStart)
+                    {
+                        continue;
+                    }
                     Candles.Add(candles[i]);
                 }
             }
@@ -2067,5 +2094,27 @@ namespace OsEngine.OsData
         /// последнее время сохранения
         /// </summary>
         public DateTime LastSaveTime;
+    }
+
+    public class SecurityToLoad
+    {
+        public string Name;
+
+        public string Id;
+
+        public void Load(string saveStr)
+        {
+            Name = saveStr.Split('*')[0];
+            Id = saveStr.Split('*')[1];
+        }
+
+        public string GetSaveStr()
+        {
+            string result = Name + "*";
+            result += Id;
+
+            return result;
+        }
+
     }
 }

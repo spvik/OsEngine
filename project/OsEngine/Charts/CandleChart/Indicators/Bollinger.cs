@@ -37,12 +37,13 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
         /// <summary>
         /// конструктор без параметров. Индикатор не будет сохраняться
+        /// используется ТОЛЬКО для создания составных индикаторов
+        /// не используйте его из слоя создания роботов!
         /// </summary>
         /// <param name="canDelete">можно ли пользователю удалить индикатор с графика вручную</param>
         public Bollinger(bool canDelete)
         {
-            Name = "";
-
+            Name = Guid.NewGuid().ToString();
             TypeIndicator = IndicatorOneCandleChartType.Line;
             ColorUp = Color.DodgerBlue;
             ColorDown = Color.DarkRed;
@@ -124,7 +125,7 @@ namespace OsEngine.Charts.CandleChart.Indicators
         { get; set; }
 
         /// <summary>
-        /// длинна расчёта индикатора
+        /// длина расчёта индикатора
         /// </summary>
         public int Lenght
         { get; set; }
@@ -132,7 +133,7 @@ namespace OsEngine.Charts.CandleChart.Indicators
         /// <summary>
         /// отклонение
         /// </summary>
-        public int Deviation
+        public decimal Deviation
         { get; set; }
 
         /// <summary>
@@ -169,7 +170,7 @@ namespace OsEngine.Charts.CandleChart.Indicators
                     ColorUp = Color.FromArgb(Convert.ToInt32(reader.ReadLine()));
                     ColorDown = Color.FromArgb(Convert.ToInt32(reader.ReadLine()));
                     Lenght = Convert.ToInt32(reader.ReadLine());
-                    Deviation = Convert.ToInt32(reader.ReadLine());
+                    Deviation = Convert.ToDecimal(reader.ReadLine());
                     PaintOn = Convert.ToBoolean(reader.ReadLine());
                     reader.Close();
                 }
@@ -237,12 +238,24 @@ namespace OsEngine.Charts.CandleChart.Indicators
 
             if (ui.IsChange && _myCandles != null)
             {
-                ProcessAll(_myCandles);
+                Reload();
+            }
+        }
 
-                if (NeadToReloadEvent != null)
-                {
-                    NeadToReloadEvent(this);
-                }
+        /// <summary>
+        /// перезагрузить индикатор
+        /// </summary>
+        public void Reload()
+        {
+            if (_myCandles == null)
+            {
+                return;
+            }
+            ProcessAll(_myCandles);
+
+            if (NeadToReloadEvent != null)
+            {
+                NeadToReloadEvent(this);
             }
         }
 
@@ -351,7 +364,7 @@ namespace OsEngine.Charts.CandleChart.Indicators
         }
 
         /// <summary>
-        /// взять значение индикаторм по индексу
+        /// взять значение индикатора по индексу
         /// </summary>
         private decimal[] GetValueSimple(List<Candle> candles, int index)
         {
