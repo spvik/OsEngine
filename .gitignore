@@ -21,7 +21,14 @@ x86/
 bld/
 [Oo]bj/
 [Ll]og/
-
+Components/Xceed.Wpf.AvalonDock/bin/
+Components/Xceed.Wpf.AvalonDock/obj/
+Components/Xceed.Wpf.AvalonDock.Themes.Expression/bin/
+Components/Xceed.Wpf.AvalonDock.Themes.Expression/obj/
+Components/Xceed.Wpf.AvalonDock.Themes.Metro/bin/
+Components/Xceed.Wpf.AvalonDock.Themes.Metro/obj/
+Components/Xceed.Wpf.AvalonDock.Themes.VS2013/bin/
+Components/Xceed.Wpf.AvalonDock.Themes.VS2013/obj/
 
 # Block Logs and Temp files in Debug directory
 [Ee]ngine/
