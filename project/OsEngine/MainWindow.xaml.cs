@@ -28,6 +28,7 @@ namespace OsEngine
     public partial class MainWindow
     {
 
+        //Main window
         private static MainWindow _window;
 
         public static Dispatcher GetDispatcher
